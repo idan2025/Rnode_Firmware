@@ -1,0 +1,27 @@
+# ---- Build toolchain / cache (~1.3 GB arduino-cli data + downloads) ----
+arduino_build/
+
+# ---- Logs ----
+*.log
+
+# ---- Python ----
+__pycache__/
+*.pyc
+
+# ---- Reticulum / LXMF PRIVATE KEYS & STATE — never publish ----
+lxmf_live_identity
+lxmf_live_storage/
+lxmf_storage/
+rns_cfg_lora/
+rns_cfg_steptcp/
+rns_cfg_tcp/
+rns_inject_config/
+
+# ---- Backup / intermediate firmware images (keep only the released ones) ----
+*.bak.zip
+rnode_firmware_t1000e_lr1110.zip
+rnode_firmware_t1000e_lr1110_continuousrx.zip
+
+# ---- Editor / agent local ----
+.claude/
+.DS_Store
