@@ -25,3 +25,6 @@ rnode_firmware_t1000e_lr1110_continuousrx.zip
 # ---- Editor / agent local ----
 .claude/
 .DS_Store
+
+# ---- Ready-to-build sketch snapshot (regenerable via build_t1000e.sh) ----
+t1000e_ready_sketch.tar.gz
