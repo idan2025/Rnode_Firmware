@@ -1,9 +1,18 @@
 # RNode Firmware for Seeed SenseCAP T1000-E — Project State
 
-Last updated: 2026-06-20, mid-session. This file reflects the CURRENT state.
+Last updated: 2026-06-21. This file reflects the CURRENT state.
 Everything below the "Resolved/historical" section at the bottom was
 superseded — board-model detection, EEPROM validity, BLE reconnect, and
 the basic build pipeline are all working now.
+
+## LATEST-3 (2026-06-21) — BLE stops advertising as soon as USB is plugged in — FIXED ✅
+- **Symptom reported:** unit works on battery, but the moment it's plugged into ANY USB source — a computer, a USB media streamer, or even a dumb charger — BLE stops advertising and stays off until Bluetooth is manually re-enabled (and it doesn't survive the next USB plug).
+- **Root cause — `while (!Serial);` in `setup()` (RNode_Firmware.ino ~line 200).** `Serial` is the nRF52840 TinyUSB **USB-CDC** port; that wait blocks boot until a host actually opens the port (asserts DTR). The guard around it already excludes every other nRF52 RNode board (RAK4631, Heltec T114, T-Echo, T3S3, TBEAM_S_V1, Heltec32_V4) for exactly this reason — **`BOARD_T1000E` was simply missing from the list.** A USB attach induces a reboot; if the power source never opens the CDC port (charger / streamer / host before RNS connects), `setup()` hangs **before `bt_init()`**, so BLE never starts. On battery the path isn't hit, so it "works on battery."
+- **Fix:** add `&& BOARD_MODEL != BOARD_T1000E` to the `#if BOARD_MODEL != ...` guard wrapping `while (!Serial);`. One line. File: `RNode_Firmware_recovered/RNode_Firmware.ino.cpp:200`.
+- **Proven on hardware without a physical replug:** send `CMD_RESET` (`C0 55 F8 C0`) then immediately close the port (drops DTR) = mimics a charger → BLE never returns; open the port (asserts DTR) → BLE `RNode AA6B` advertises. After the fix, BLE advertises even with the port left closed. Isolate that the radio works on USB independently: `CMD_BT_CTRL 0x01` (`C0 46 01 C0`) starts advertising fine while on USB.
+- **Built + distributed:** `.bin` 214568 B; zip sha256 `04d9e985f154bb0f7b0c265088eefee263dcda7f6400ed6e4cc0c7017520d2d7` (inner `.bin` sha256 `4f907709ec86afb962b994f61363a7ad808a74291ff9050a5aacc2aefff3a0f6`). Rolled into BOTH `firmware/rnode_firmware_t1000e.zip` (web flasher) and `Seeed Studio/.../rnode_firmware_seeed_t1000e_lr1110.zip` (production), and the GitHub Release `v1.0-t1000e` asset (clobbered). Committed + pushed to `main` (`bd07362`).
+- **Web flasher needs NO change** and was verified end-to-end: its T1000-E `firmware_url` is the raw `main` zip (no pinned hash), served with `access-control-allow-origin: *`; the served `.bin` is bit-identical to the committed-source rebuild; and its "Set Firmware Hash" step reads the device's live hash, so it self-adapts to the new image. Just push the zip to `main` (CDN ~5 min) and it's live.
+- **Secondary latent bug (left unfixed, NOT the cause):** `serial_write()` (Utilities.h) uses a blocking `Serial.write()` whenever `bt_state != BT_STATE_CONNECTED`; if the CDC is open but undrained the whole `loop()` can freeze (see process lesson below). BLE advertising survives this (SoftDevice is independent), so it does not explain the advertising-stop symptom.
 
 ## LATEST (2026-06-20, this session) — `dcd()` carrier-detect bug fixed; cache rebuilt; provisioning gotcha
 - **Symptom reported:** direct RNode↔RNode over LoRa (no bridge): a 380-char message never arrived (RX LED flashes then off, never delivered); one-word messages very slow. TX/announces worked.
@@ -108,6 +117,15 @@ Spent a long time chasing what looked like a fatal firmware hang (device respond
 This also means: don't conclude the firmware is broken just because a quick one-shot Python probe times out — retry with a continuously-draining read loop before assuming a real regression.
 
 ## Build & flash workflow that actually works (current, confirmed this session)
+
+### One-command build (preferred) — `build_t1000e.sh`
+`./build_t1000e.sh` (in this folder) does the whole thing: reconstructs the buildable sketch in `/tmp/RNode_Firmware` from the tracked (preprocessed) source, writes the arduino-cli config, and compiles — printing the output DFU zip path. Use this instead of redoing the manual steps below by hand. It exists because the buildable sketch lives in `/tmp` (wiped on reboot) and the tracked `RNode_Firmware_recovered/RNode_Firmware.ino.cpp` is the Arduino-PREPROCESSED form (has cosmetic `#line` directives; must be renamed to `.ino` and the directives stripped, or library auto-discovery / the preprocessor break). The script derives all paths from its own location and the bundled `arduino_build/` toolchain.
+- `./build_t1000e.sh` — reconstruct from tracked source + build (always in sync with the repo).
+- `./build_t1000e.sh --from-snapshot` — restore the saved ready-to-build sketch from `t1000e_ready_sketch.tar.gz` (a gitignored, on-disk literal copy of the last good `/tmp` sketch) instead of reconstructing.
+- Output: `/tmp/RNode_Firmware/build/Seeeduino.nrf52.tracker_t1000_e_lorawan/RNode_Firmware.ino.zip`. Harmless warnings: `HAS_TCXO/HAS_INPUT/HAS_SLEEP redefined` (Boards.h defaults then per-board overrides).
+- After building, flash with Method B below, then `python hash_sync.py <port> --write` to restore the on-device hash gate, then distribute per "Firmware distribution" (roll the zip into BOTH distributed copies + the Release asset; see the agent memory `firmware-distribution-push-workflow`).
+
+The manual equivalent (what the script automates) is documented below for reference.
 
 ### Arduino CLI config
 - Use `/tmp/arduino-config/arduino-cli.yaml` as `--config-file` (NOT `/tmp/RNode_Firmware/arduino-cli.yaml`, which only has board-manager URLs, no `directories:` section — using it gives "No platforms installed").
