@@ -5,6 +5,14 @@ Everything below the "Resolved/historical" section at the bottom was
 superseded — board-model detection, EEPROM validity, BLE reconnect, and
 the basic build pipeline are all working now.
 
+## RADIO RE-VERIFIED on the shipped firmware (2026-06-21, after LATEST-3+4 fixes) ✅
+Confirmed TX and RX both still work on the distributed build (`.bin 7d40803e`, both fixes) — neither fix touches `lr1110.cpp`, and this proves the radio subsystem is unaffected.
+- **Arm:** `radio_online=1` after KISS bring-up (917.8 MHz / 250 kHz / SF10 / CR5 / 20 dBm) → LR1110 SPI + version read + calibration all OK.
+- **TX:** sent 3 LoRa packets; airtime (`CMD_STAT_CHTM` ats field) rose 0→381, **no TXFAILED** → PA keys up and transmits.
+- **RX front-end:** noise floor steady **−112 dBm**, live `current_rssi` (settled to floor) → receiver digitizing RF (expected ~−110…−128 dBm).
+- **RX over the air:** user TX'd from the Heltec; T1000E received **18 valid-CRC packets** (only good-CRC frames are forwarded as `CMD_DATA`), 9×167 B + 9×207 B, RSSI −58…−60 dBm, SNR 12–15 dB → full receive path demodulates real packets.
+- **How to redo:** radio test scripts kept at `/tmp/radio_test.py` (arm+TX+noise), `/tmp/nf_mon.py` (noise-floor monitor), `/tmp/rx_watch.py` (logs received `CMD_DATA` packets w/ RSSI/SNR to `/tmp/rx_watch.log`). Production fw has NO `stat_rx`/`stat_tx` debug counters — use `CMD_DATA` capture + `CMD_STAT_CHTM` (0x25; noise_floor = byte9 − 157) instead of `rx_diag.py`'s counters. The Heltec is the user's TX radio (not passed through to the VM), so OTA RX needs the user to transmit.
+
 ## LATEST-4 (2026-06-21) — blocking USB-CDC write that froze the whole loop — HARDENED ✅
 - **Bug:** `serial_write()` (Utilities.h) wrote to the USB-CDC via a bare `Serial.write(byte)` whenever `bt_state != BT_STATE_CONNECTED`. On the nRF52 that call **blocks until the host drains** the CDC TX FIFO; a host that holds the port open but stops reading (a stalled terminal, ModemManager probing on plug-in, an app that connected then hung) freezes the entire `loop()` — radio RX/TX, KISS and the BLE data path all stall until the host drains (documented in the "naive serial test scripts" lesson below). Independent of the LATEST-3 boot hang.
 - **Fix:** new `usb_serial_write()` helper (nRF52 only) wraps the write with a bounded wait — a healthy host still gets every byte (it waits while the FIFO drains), but if the FIFO stays full past `USB_TX_STALL_TIMEOUT_MS` (100 ms) it drops the byte and keeps the loop alive. A one-shot `usb_tx_stalled` latch makes the rest of a stalled burst drop instantly instead of paying the timeout per byte; it clears the moment the host resumes draining or closes the port. `serial_write()` routes all its `Serial.write` paths through it. File: `RNode_Firmware_recovered/Utilities.h`.
