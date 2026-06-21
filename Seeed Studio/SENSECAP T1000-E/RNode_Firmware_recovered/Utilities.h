@@ -809,14 +809,44 @@ int8_t  led_standby_direction = 0;
 	#endif
 #endif
 
+#if MCU_VARIANT == MCU_NRF52
+	// On the nRF52 (USB-CDC) Serial.write() blocks forever when a host has the
+	// port open but is not draining it (a stalled terminal, ModemManager
+	// probing the CDC on plug-in, an app that connected then hung). That stalls
+	// the whole main loop - radio RX/TX, KISS, and the BLE data path all stop.
+	// Cap the wait: a healthy host still gets every byte (we wait while the FIFO
+	// drains), but if it stays full past a short timeout we drop the byte and
+	// keep the loop alive. The one-shot latch makes the rest of a stalled burst
+	// drop immediately instead of paying the timeout per byte; it clears as soon
+	// as the host resumes draining (or closes the port).
+	#define USB_TX_STALL_TIMEOUT_MS 100
+	static bool usb_tx_stalled = false;
+	static inline void usb_serial_write(uint8_t byte) {
+		if (!Serial) { usb_tx_stalled = false; return; }   // port not open: drop, never block
+		if (Serial.availableForWrite() < 1) {
+			if (usb_tx_stalled) return;                    // already stalled: drop fast
+			uint32_t t0 = millis();
+			while (Serial.availableForWrite() < 1) {
+				if (!Serial) { usb_tx_stalled = false; return; }
+				if (millis() - t0 > USB_TX_STALL_TIMEOUT_MS) { usb_tx_stalled = true; return; }
+				yield();                                   // let the USB/RTOS task drain the FIFO
+			}
+		}
+		usb_tx_stalled = false;
+		Serial.write(byte);
+	}
+#else
+	static inline void usb_serial_write(uint8_t byte) { Serial.write(byte); }
+#endif
+
 void serial_write(uint8_t byte) {
 	#if HAS_BLUETOOTH || HAS_BLE == true
 		if (bt_state != BT_STATE_CONNECTED) {
 			#if HAS_WIFI
 				if (wifi_host_is_connected()) { wifi_remote_write(byte); }
-				else                          { Serial.write(byte); }
+				else                          { usb_serial_write(byte); }
 			#else
-				Serial.write(byte);
+				usb_serial_write(byte);
 			#endif
 		} else {
 			SerialBT.write(byte);
@@ -828,7 +858,7 @@ void serial_write(uint8_t byte) {
       #endif
 		}
 	#else
-		Serial.write(byte);
+		usb_serial_write(byte);
 	#endif
 }
 

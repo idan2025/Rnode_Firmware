@@ -15,6 +15,6 @@ metadata:
 
 **How it was proven (no physical replug needed):** send `CMD_RESET` (`C0 55 F8 C0`) then immediately close the port (drops DTR) → mimics a charger; BLE never returns. Open the port (asserts DTR) → firmware unblocks, BLE "RNode AA6B" advertises. After the fix, BLE advertises even with the port left closed. Confirm radio works on USB independently: `CMD_BT_CTRL 0x01` (`C0 46 01 C0`) starts advertising fine while on USB.
 
-**Secondary latent bug (NOT the cause of the advertising-stop, left unfixed):** `serial_write()` (Utilities.h) calls blocking `Serial.write()` whenever `bt_state != BT_STATE_CONNECTED`; if the CDC is open but undrained the whole `loop()` can freeze (documented in AGENTS.md). Advertising survives this (SoftDevice is independent), so it does not explain the user symptom.
+**Secondary bug, since FIXED (see [[usb-cdc-blocking-write-freeze]]):** `serial_write()` (Utilities.h) called blocking `Serial.write()` whenever `bt_state != BT_STATE_CONNECTED`; if the CDC is open but undrained the whole `loop()` can freeze. Advertising survives this (SoftDevice is independent), so it never explained the user symptom — but it was hardened anyway via a bounded `usb_serial_write()`.
 
 Build/flash/verify recipe lives in [[t1000e-build-flash-recipe]].
