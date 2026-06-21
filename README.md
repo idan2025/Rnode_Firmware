@@ -48,6 +48,24 @@ Plus an on-device firmware-hash gate that must be re-synced after a manual flash
 radio silently refuses to start. Full engineering log:
 [`AGENTS.md`](Seeed%20Studio/SENSECAP%20T1000-E/AGENTS.md).
 
+## Plug it in without losing Bluetooth
+
+Two USB-side fixes the mainline firmware's nRF52 path didn't cover for this board:
+
+- **Bluetooth no longer drops when you connect USB power.** The device used to wait at
+  boot for a host to open its USB serial port — so plugging into a charger, a power bank,
+  a media streamer, or a computer before an app connects (anything that supplies power
+  without opening the port) left Bluetooth off until you toggled it by hand. The T1000-E
+  now boots straight through, like every other nRF52 RNode.
+- **A stalled USB host can't freeze the firmware.** Writing to the USB serial port could
+  block forever if a host opened the port but stopped reading it (a hung terminal, the OS
+  probing the port on plug-in). That froze the *whole* device — radio and Bluetooth
+  included. Serial writes are now bounded, so the firmware keeps running no matter what
+  the host does.
+
+Both verified on hardware, and the radio was re-checked afterwards — TX, RX, and a clean
+−112 dBm noise floor all still good.
+
 ## What's in here
 
 ```
@@ -56,6 +74,7 @@ Seeed Studio/
     RNode_Firmware_recovered/    custom firmware source (LR1110 driver + lr11xx SDK)
     rnode_firmware_seeed_t1000e_lr1110.zip   prebuilt production DFU package
     provision_t1000e.sh          one-command flash + provision + BLE + hash-sync
+    build_t1000e.sh              one-command reconstruct-sketch + compile
     hash_sync.py / read_diag.py / lxmf_live.py   bring-up & diagnostic tools
     AGENTS.md / Result.md        engineering log + results
 firmware/
