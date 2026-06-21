@@ -197,11 +197,18 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_T1000E
     // Some boards need to wait until the hardware UART is set up before booting
     // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
     // until a serial connection is actually established with a master. Thus, it
     // is disabled on this platform.
+    //
+    // The T1000E uses the nRF52840 USB CDC for Serial. Blocking here means that
+    // whenever the device reboots while powered from a USB source that never
+    // opens the CDC port (a dumb charger, a USB power bank/streamer, or a host
+    // before RNS/an app connects), setup() hangs before bt_init() and BLE never
+    // starts advertising - "Bluetooth stops as soon as you plug in USB". It is
+    // therefore excluded from the wait, like the other nRF52 boards above.
     while (!Serial);
   #endif
 
