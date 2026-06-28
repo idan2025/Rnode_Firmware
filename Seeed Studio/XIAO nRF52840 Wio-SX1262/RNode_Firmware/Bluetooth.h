@@ -391,6 +391,10 @@ char bt_devname[11];
 
 #elif MCU_VARIANT == MCU_NRF52
     uint32_t pairing_pin = 0;
+    // Set when Bluefruit.begin() has already been called early (before
+    // eeprom_begin) so InternalFS flash writes can complete; bt_setup_hw()
+    // then skips its own begin() and just does the EEPROM-dependent setup.
+    bool bt_sd_begun = false;
 
   uint8_t eeprom_read(uint32_t mapped_addr);
 
@@ -519,6 +523,53 @@ char bt_devname[11];
     return pairing_pin;
   }
 
+  // Bring the SoftDevice + its event dispatch up early, WITHOUT touching
+  // EEPROM. On the adafruit nRF52 core, InternalFS flash writes go through
+  // sd_flash_*, which only complete once the SoftDevice event loop set up by
+  // Bluefruit.begin() is running. If eeprom_begin() runs first, the very first
+  // flash write blocks forever and setup() never reaches the end (all LEDs
+  // stay off). Call this before eeprom_begin(); bt_setup_hw() then sees
+  // bt_sd_begun and skips its own begin(), doing only the EEPROM-dependent
+  // setup (passkey, device name, advertising).
+  void bt_begin_early() {
+    if (!bt_sd_begun) {
+      // The adafruit nRF52 bootloader hands control to the app with the
+      // SoftDevice DISABLED (clean), same as every other adafruit nRF52 board
+      // and as Meshtastic assumes on this exact XIAO. Bluefruit.begin() then
+      // does ONE clean sd_softdevice_enable().
+      //
+      // Do NOT call sd_softdevice_disable() first. Proven on HW: a disable
+      // followed by begin()'s re-enable wedges inside sd_softdevice_enable
+      // (boot hangs blue-only, before the green "SD enabled" marker in
+      // bluefruit.cpp). Disable-alone is safe (used by the BLE-off path), but
+      // disable->enable hangs. Let begin() enable from the clean handoff state.
+      #if BOARD_MODEL == BOARD_XIAO_NRF52
+        // PROBE: detect SoftDevice handoff state. sd_softdevice_is_enabled is
+        // an MBR-handled SVC, safe whether the SD is on or off. Light RED solid
+        // if the SD is already enabled at handoff. Combined with the blue
+        // "inside begin()" marker this localises the wedge:
+        //   blue only          = SD OFF at handoff, begin() wedges at sd_softdevice_enable
+        //   blue + red solid   = SD ON at handoff, begin() wedges re-enabling an already-on SD
+        //   green progress     = success
+        {
+          uint8_t sd_en = 0;
+          (void) sd_softdevice_is_enabled(&sd_en);
+          if (sd_en) { digitalWrite(LED_RED, LOW); }  // red solid = SD enabled at handoff
+        }
+      #endif
+      Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
+      Bluefruit.autoConnLed(false);
+      #if BOARD_MODEL == BOARD_XIAO_NRF52
+        digitalWrite(LED_BLUE, LOW);   // marker: entering Bluefruit.begin()
+      #endif
+      bool ok = Bluefruit.begin();
+      #if BOARD_MODEL == BOARD_XIAO_NRF52
+        digitalWrite(LED_BLUE, HIGH);  // marker: begin() returned
+      #endif
+      if (ok) { bt_sd_begun = true; }
+    }
+  }
+
   bool bt_setup_hw() {
     // Serial.println("Setup HW");
     if (!bt_ready) {
@@ -531,9 +582,12 @@ char bt_devname[11];
       } else {
         bt_enabled = false;
       }
-      Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
-      Bluefruit.autoConnLed(false);
-      if (Bluefruit.begin()) {
+      if (!bt_sd_begun) {
+        Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
+        Bluefruit.autoConnLed(false);
+      }
+      if (bt_sd_begun || Bluefruit.begin()) {
+        bt_sd_begun = true;
         uint32_t pin = bt_get_passkey();
         char pin_char[6];
         sprintf(pin_char,"%lu", pin);
@@ -603,12 +657,6 @@ char bt_devname[11];
       // There is no room for Name in Advertising packet
       // Use Scan response for Name
       Bluefruit.ScanResponse.addName();
-
-      // Slow the advertising interval to cut BLE awake time (the T1000-E runs
-      // on battery with BLE as the main link). 160..1600 = 100ms min, 1s max
-      // (units of 0.625ms). Discoverability is preserved; only the gap between
-      // adv events grows, which is when the radio/SoC can idle.
-      Bluefruit.Advertising.setInterval(160, 1600);
 
       Bluefruit.Advertising.start(0);
 

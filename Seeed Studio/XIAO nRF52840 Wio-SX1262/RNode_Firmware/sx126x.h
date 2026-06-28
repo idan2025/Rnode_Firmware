@@ -1,35 +1,30 @@
-#line 1 "/tmp/RNode_Firmware/lr1110.h"
-// Copyright Mark Qvist.
+#line 1 "/tmp/RNode_Firmware/sx126x.h"
+// Copyright Sandeep Mistry, Mark Qvist and Jacob Eva.
 // Licensed under the MIT license.
-//
-// RNode-facing radio driver for the Semtech LR1110, as used on the
-// Seeed SenseCAP Wio Tracker T1000-E. Wraps Semtech's vendored LR11xx
-// command driver (lr11xx_driver/) behind the same Stream-derived
-// public interface used by sx126x, so it can be assigned directly to
-// the generic `LoRa` pointer in Utilities.h.
 
-#ifndef LR1110_H
-#define LR1110_H
+#ifndef SX126X_H
+#define SX126X_H
 
 #include <Arduino.h>
 #include <SPI.h>
 #include "Modem.h"
 
-#define LORA_DEFAULT_SS_PIN    12
-#define LORA_DEFAULT_RESET_PIN 42
-#define LORA_DEFAULT_DIO0_PIN  33
+#define LORA_DEFAULT_SS_PIN    10
+#define LORA_DEFAULT_RESET_PIN 9
+#define LORA_DEFAULT_DIO0_PIN  2
 #define LORA_DEFAULT_RXEN_PIN  -1
-#define LORA_DEFAULT_BUSY_PIN  7
+#define LORA_DEFAULT_TXEN_PIN  -1
+#define LORA_DEFAULT_BUSY_PIN  -1
 #define LORA_MODEM_TIMEOUT_MS 20E3
 
 #define PA_OUTPUT_RFO_PIN      0
 #define PA_OUTPUT_PA_BOOST_PIN 1
 
-#define RSSI_OFFSET 0
+#define RSSI_OFFSET 157
 
-class lr1110 : public Stream {
+class sx126x : public Stream {
 public:
-  lr1110();
+  sx126x();
 
   int begin(long frequency);
   void end();
@@ -60,14 +55,6 @@ public:
   void onReceive(void(*callback)(int));
 
   void receive(int size = 0);
-  // Low-power RX: arms the LR11xx hardware-autonomous Rx Duty Cycle / CAD loop
-  // (CAD -> on activity, RX to receive the packet -> sleep -> repeat). The radio
-  // wakes the MCU on DIO1 only when a packet is received (RX_DONE), so the MCU can
-  // WFI-sleep between packets. See lr1110.cpp for the trade-off: this can miss
-  // packets from peers that transmit a short preamble, because CAD only catches
-  // a preamble that overlaps a CAD listening window. Only used when the sketch
-  // is built with -DLOW_POWER_RX; otherwise receive() (continuous RX) is used.
-  void receive_duty_cycle();
   void standby();
   void sleep();
   void reset(void);
@@ -92,7 +79,12 @@ public:
   void rxAntEnable();
   void loraMode();
   void waitOnBusy();
+  void executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size);
+  void executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size);
+  void writeBuffer(const uint8_t* buffer, size_t size);
+  void readBuffer(uint8_t* buffer, size_t size);
   void setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc);
+
   void setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro);
 
   // deprecated
@@ -104,18 +96,25 @@ public:
   void setPins(int ss = LORA_DEFAULT_SS_PIN, int reset = LORA_DEFAULT_RESET_PIN, int dio0 = LORA_DEFAULT_DIO0_PIN, int busy = LORA_DEFAULT_BUSY_PIN, int rxen = LORA_DEFAULT_RXEN_PIN);
   void setSPIFrequency(uint32_t frequency);
 
-  void dumpRegisters(Stream& out) {}
+  void dumpRegisters(Stream& out);
 
 private:
   void explicitHeaderMode();
   void implicitHeaderMode();
 
   void handleDio0Rise();
+
+  uint8_t readRegister(uint16_t address);
+  void writeRegister(uint16_t address, uint8_t value);
+  uint8_t singleTransfer(uint8_t opcode, uint16_t address, uint8_t value);
+
   static void onDio0Rise();
 
   void handleLowDataRate();
+  void optimizeModemSensitivity();
+
   void calibrate(void);
-  void loadPacket();
+  void calibrate_image(long frequency);
 
 private:
   SPISettings _spiSettings;
@@ -135,12 +134,13 @@ private:
   int _implicitHeaderMode;
   int _payloadLength;
   int _crcMode;
+  int _fifo_tx_addr_ptr;
+  int _fifo_rx_addr_ptr;
   uint8_t _packet[255];
-  uint8_t _txbuf[255];
   bool _preinit_done;
   void (*_onReceive)(int);
 };
 
-extern lr1110 lr1110_modem;
+extern sx126x sx126x_modem;
 
 #endif

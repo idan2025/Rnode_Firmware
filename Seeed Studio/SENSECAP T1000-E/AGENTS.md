@@ -1,9 +1,104 @@
 # RNode Firmware for Seeed SenseCAP T1000-E — Project State
 
-Last updated: 2026-06-21. This file reflects the CURRENT state.
+Last updated: 2026-06-28. This file reflects the CURRENT state.
 Everything below the "Resolved/historical" section at the bottom was
 superseded — board-model detection, EEPROM validity, BLE reconnect, and
 the basic build pipeline are all working now.
+
+## BATTERY-LIFE FIX (2026-06-28) — branch `fix/t1000e-battery` ✅ built, pending HW verify
+
+Reported: two T1000-E units runtime dropped from ~2 days (Meshtastic) to <24h on
+RNode firmware. Work happens on a cloned working copy (do NOT edit `main` until
+verified): `Seeed Studio/SENSECAP T1000-E/working/` — source in
+`working/RNode_Firmware_recovered/`, build with `working/build_t1000e.sh`
+(BUILDROOT points back at the shipped `../arduino_build` toolchain, not copied).
+
+### Root causes found (confirmed in source)
+1. **CPU never sleeps (biggest, zero-cost).** `loop()` returns to the Seeeduino
+   nRF5 core `loop_task`, which calls `yield()` = `taskYIELD()` (rtos.cpp:75) —
+   NON-blocking. The loop task stays ready, the lower-priority FreeRTOS idle
+   task never runs, so the nRF52 core never WFI-sleeps → ~64 MHz steady draw.
+2. **Radio in continuous RX.** `lr1110::receive()` calls
+   `lr11xx_radio_set_rx_with_timeout_in_rtc_step(CTX, 0xFFFFFF)` = RX continuous.
+   LR1110 RX current dominates.
+3. **BLE advertises at default (fast) interval.** `bt_start()` never set an
+   interval.
+
+### Fixes applied
+- **Fix 1 — CPU idle (always on):** `delay(1)` (guarded `MCU_NRF52`) appended at
+  the end of `loop()` (`RNode_Firmware.ino.cpp`). `delay(1)` = `vTaskDelay(1)` →
+  loop task blocks 1 tick → idle runs → CPU WFI between iterations. 1 ms latency
+  negligible vs LoRa airtime; radio/USB/BLE IRQs wake the CPU instantly. Do NOT
+  use raw `__WFE()` (SoftDevice/BLE is on → `delay()`/`sd_app_evt_wait` is the
+  safe primitive). No behavior change. Default build binary = 202304 B, identical
+  size to pre-fix (delay compiles to a tiny call).
+- **Fix 2 — BLE slow advertising (always on, BLE stays the main link):**
+  `Bluefruit.Advertising.setInterval(160, 1600)` (100 ms–1 s) added in `bt_start()`
+  (`Bluetooth.h`) before `Advertising.start(0)`. Discoverability preserved; only
+  the gap between adv events grows.
+- **Fix 3 — LR1110 CAD RX duty-cycle (OPT-IN, default OFF):**
+  `lr1110::receive_duty_cycle()` (`lr1110.cpp`/`lr1110.h`) arms the LR11xx
+  hardware-autonomous **Rx Duty Cycle / CAD loop**: CAD → on preamble, auto RX
+  (`cad_exit_mode=RX`) → deliver via the existing `RX_DONE` IRQ/path → sleep
+  (`sleep_period`) → repeat, all in silicon; MCU woken on DIO1 only on RX_DONE.
+  With Fix 1 the MCU WFI-sleeps between packets too. `lora_receive()` is gated on
+  the **build flag `LOW_POWER_RX`** (OFF by default) so the shipped build keeps
+  continuous RX. Build the low-power variant with `./build_t1000e.sh --low-power`
+  (adds `-DLOW_POWER_RX`). CAD params: `cad_symb_nb=8` (SF10), `detPeak=0x32`,
+  `detMin=0x0A` (Semtech defaults), timings `rx_period=62ms / sleep_period=200ms`
+  (~24% duty) — tune in `receive_duty_cycle()`.
+  **TRADE-OFF (why it is opt-in):** CAD only catches a preamble that OVERLAPS a
+  CAD listening window. A peer transmitting a standard short preamble (~8
+  symbols) can miss the window → packet lost. Reliable low-power RX needs peers
+  with a long preamble (or a rendezvous schedule). This is why the default build
+  stays continuous RX. The MCU-sleep + slow-BLE fixes are the safe wins; CAD is
+  the extra lever for nodes that can tolerate the trade-off.
+
+### Build / flash / verify (HW step needs the physical unit — none was connected during this work)
+1. `cd working && ./build_t1000e.sh` → DFU zip (default, continuous RX). For the
+   experimental low-power build: `./build_t1000e.sh --low-power`.
+2. Flash + provision a unit: `./provision_t1000e.sh` (VID:PID 2886:8057; uses the
+   patched rnodeconf + adafruit-nrfutil in `~/Downloads/venvs/rns`). One unit at
+   a time.
+3. **Regression guard (must pass):** re-run the radio soak — `node_soak.py lora`
+   + `node_soak.py tcp` through the LoRa↔TCP bridge (confirm T1000E TX and RX
+   both still work), and the OTA RX test (user TX's from the Heltec; confirm
+   valid-CRC `CMD_DATA` arrives with RSSI/SNR), same as the 2026-06-21
+   re-verification. Default build must show NO RX regression (continuous RX
+   unchanged).
+4. **Low-power A/B (optional, on one unit):** flash the `--low-power` build on
+   one unit, keep the other on the default build, run the soak again. If the
+   low-power unit still receives the peer's traffic reliably → CAD works for
+   this link and the runtime gain is real; if it drops packets → keep default,
+   leave CAD opt-in. Power can't be measured on the sealed unit, so verify by
+   runtime-to-dead vs the <24h baseline (charge both fully, time to shutdown).
+
+### HW verify DONE on the DEFAULT build (2026-06-28, one unit) ✅
+- Flashed via `adafruit-nrfutil dfu serial --package <zip> -p /dev/ttyACM0`.
+  DFU entry: 1200-baud touch on /dev/ttyACM0 → re-enumerates to PID **2886:0057**
+  (not 0045). `adafruit-nrfutil` does NOT auto-touch; do the 1200-baud touch
+  manually first: `python3 -c "import serial,time; s=serial.Serial('/dev/ttyACM0',1200); time.sleep(0.1); s.close()"`.
+- After flash the on-device hash gate MISMATCHES (direct DFU doesn't update the
+  target hash) → radio won't arm. Fix: `python3 hash_sync.py /dev/ttyACM0 --write`
+  (writes the live hash back as the target, device saves + hard-resets). Re-run
+  `hash_sync.py` to confirm MATCH. This is the SAME recovery flow as a direct
+  adafruit-nrfutil flash on any nRF52 RNode.
+- Verify (`working/radio_verify.py`): rnodeconf `-i` → "Seeed SenseCAP
+  T1000-E 863-928 MHz", fw 1.86. KISS arm (917.8 MHz / 250 kHz / SF10 / 4-5 /
+  20 dBm) → radio_online, `CMD_STAT_CHTM` responds, 3× CMD_DATA TX packets →
+  CHTM changes (TX airtime advanced), noise floor **−127 dBm** (sane, silent
+  channel), NO `CMD_ERROR`. → **radio arms + TX path intact, no regression**
+  from Fix 1+2 (neither touches the radio). Default build binary 202304 B.
+- RX-over-the-air + runtime-to-dead still TODO (need the Heltec peer TX and a
+  full battery cycle — sealed unit, user-side). The default build keeps
+  continuous RX, so RX is expected unchanged from the 2026-06-21 re-verify.
+
+### Merge gate (before touching `main`)
+- Default build compiles, flashes, provisions, TX+RX verified (no regression).
+- `--low-power` build compiles + (if tested) RX confirmed for the target link.
+- This AGENTS.md updated. Then: push `fix/t1000e-battery`, open PR, merge to
+  `main`, and refresh the distribution (main-branch drop-in zip + Release asset;
+  verify via the API not the CDN — see firmware-distribution workflow).
 
 ## RADIO RE-VERIFIED on the shipped firmware (2026-06-21, after LATEST-3+4 fixes) ✅
 Confirmed TX and RX both still work on the distributed build (`.bin 7d40803e`, both fixes) — neither fix touches `lr1110.cpp`, and this proves the radio subsystem is unaffected.

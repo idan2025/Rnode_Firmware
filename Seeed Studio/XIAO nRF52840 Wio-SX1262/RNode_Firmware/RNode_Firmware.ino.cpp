@@ -18,12 +18,19 @@
 #include <SPI.h>
 #include "Utilities.h"
 
-#if BOARD_MODEL == BOARD_T1000E
+#if BOARD_MODEL == BOARD_T1000E || BOARD_MODEL == BOARD_XIAO_NRF52
   // Required for the Seeed nRF52 BSP's USB-CDC implementation to be
   // linked in; without an explicit include, Arduino's library
   // dependency resolver never discovers it and the build fails to
-  // link against the core's own main.cpp.
+  // link against the core's own main.cpp (the device then enumerates
+  // no USB at all - looks like a dead board).
   #include <Adafruit_TinyUSB.h>
+#endif
+
+#if BOARD_MODEL == BOARD_XIAO_NRF52 && !HAS_BLE
+  // For sd_softdevice_disable() - the SoftDevice API SVC stubs are inline, so
+  // the header is required (the symbol cannot just be forward-declared).
+  #include <nrf_sdm.h>
 #endif
 
 FIFOBuffer serialFIFO;
@@ -126,6 +133,13 @@ void buffer_serial();
 #line 1912 "/tmp/RNode_Firmware/RNode_Firmware.ino"
 void serial_interrupt_init();
 #line 69 "/tmp/RNode_Firmware/RNode_Firmware.ino"
+#include <nrf_sdm.h>
+#include <nrf_clock.h>
+// SoftDevice fault handler for the XIAO raw-enable probe in setup().
+void xiao_sd_fault_handler(uint32_t id, uint32_t pc, uint32_t info) {
+  (void) id; (void) pc; (void) info;
+  while (1) { }
+}
 void setup() {
   #if MCU_VARIANT == MCU_ESP32
     boot_seq();
@@ -146,6 +160,13 @@ void setup() {
   #endif
 
   #if MCU_VARIANT == MCU_NRF52
+    #if BOARD_MODEL == BOARD_XIAO_NRF52
+      pinMode(LED_RED, OUTPUT); pinMode(LED_GREEN, OUTPUT); pinMode(LED_BLUE, OUTPUT);
+      digitalWrite(LED_RED, HIGH); digitalWrite(LED_GREEN, HIGH); digitalWrite(LED_BLUE, HIGH);
+      // LEDs off (active-LOW). No SoftDevice touch here: with HAS_BLE=false the
+      // bootloader-left-enabled SoftDevice is dropped later in setup() via
+      // sd_softdevice_disable(), and InternalFS uses the direct-NVMC flash path.
+    #endif
     #if BOARD_MODEL == BOARD_TECHO
       delay(200);
       pinMode(PIN_VEXT_EN, OUTPUT);
@@ -158,7 +179,9 @@ void setup() {
       delay(200);
     #endif
 
-    if (!eeprom_begin()) { Serial.write("EEPROM initialisation failed.\r\n"); }
+    #if BOARD_MODEL != BOARD_XIAO_NRF52
+      if (!eeprom_begin()) { Serial.write("EEPROM initialisation failed.\r\n"); }
+    #endif
   #endif
 
   // Seed the PRNG for CSMA R-value selection
@@ -197,18 +220,18 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_T1000E
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_T1000E && BOARD_MODEL != BOARD_XIAO_NRF52
     // Some boards need to wait until the hardware UART is set up before booting
     // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
     // until a serial connection is actually established with a master. Thus, it
     // is disabled on this platform.
     //
-    // The T1000E uses the nRF52840 USB CDC for Serial. Blocking here means that
-    // whenever the device reboots while powered from a USB source that never
-    // opens the CDC port (a dumb charger, a USB power bank/streamer, or a host
-    // before RNS/an app connects), setup() hangs before bt_init() and BLE never
-    // starts advertising - "Bluetooth stops as soon as you plug in USB". It is
-    // therefore excluded from the wait, like the other nRF52 boards above.
+    // The T1000E and XIAO nRF52840 use the nRF52840 USB CDC for Serial. Blocking
+    // here means that whenever the device reboots while powered from a USB source
+    // that never opens the CDC port (a dumb charger, a USB power bank/streamer,
+    // or a host before RNS/an app connects), setup() hangs before bt_init() and
+    // BLE never starts advertising. They are therefore excluded from the wait,
+    // like the other nRF52 boards above.
     while (!Serial);
   #endif
 
@@ -275,11 +298,19 @@ void setup() {
       delay(100);
     #endif
 
+    #if BOARD_MODEL == BOARD_XIAO_NRF52
+      // The Wio-SX1262 needs a hardware reset before it will answer over SPI;
+      // without it the first SPI probe in preInit() can block.
+      delay(100);
+      LoRa->reset();
+      delay(100);
+    #endif
+
     // Check installed transceiver chip and
     // probe boot parameters.
     if (LoRa->preInit()) {
       modem_installed = true;
-      
+
       #if HAS_INPUT
         // Skip quick-reset console activation
       #else
@@ -335,11 +366,35 @@ void setup() {
       pmu_ready = init_pmu();
     #endif
 
+    #if BOARD_MODEL == BOARD_XIAO_NRF52
+      // Order is critical on this board:
+      //  1) bring the SoftDevice up FIRST so its flash-event dispatch is
+      //     running before any InternalFS flash access (otherwise the first
+      //     flash write in eeprom_begin() blocks forever - LEDs stay off).
+      //  2) eeprom_begin() owns the global `file` handle and self-heals the FS
+      //     (adafruit InternalFS.begin() auto-formats an unmountable FS,
+      //     creates the EEPROM file on first boot, reformats a garbage file).
+      //     Do NOT reuse the global `file` for any flag-file here - closing it
+      //     leaves every later eeprom_read()/update() on a closed handle.
+      //  3) bt_init() (below) reuses the already-begun SoftDevice (bt_sd_begun)
+      //     and only does the EEPROM-dependent BLE setup + advertising.
+      #if HAS_BLE
+        bt_begin_early();
+      #else
+        // The adafruit bootloader hands control to the app with the SoftDevice
+        // still ENABLED. With BLE off we never run the Bluefruit task that
+        // dispatches SoftDevice events, so InternalFS sd_flash_* ops would block
+        // forever waiting on a completion event. Disable the SoftDevice here so
+        // the patched flash HAL (flash_nrf5x.c) drives the NVMC directly.
+        sd_softdevice_disable();
+      #endif
+      eeprom_begin();
+    #endif
+
     #if HAS_BLUETOOTH || HAS_BLE == true
       bt_init();
       bt_init_ran = true;
     #endif
-
     if (console_active) {
       #if HAS_CONSOLE
         console_start();
@@ -375,21 +430,18 @@ void setup() {
   validate_status();
 
   if (op_mode != MODE_TNC) LoRa->setFrequency(0);
+
+  #if BOARD_MODEL == BOARD_XIAO_NRF52
+    digitalWrite(LED_GREEN, LOW);
+  #endif
 }
 
 void lora_receive() {
-  #if defined(LOW_POWER_RX)
-    // Opt-in low-power RX (LR1110 only): radio CAD/sleep duty-cycle loop, MCU
-    // WFI between packets. NOT the default -- can miss short-preamble peers.
-    // Enable by building with -DLOW_POWER_RX (see build_t1000e.sh).
-    LoRa->receive_duty_cycle();
-  #else
-    if (!implicit) {
-      LoRa->receive();
-    } else {
-      LoRa->receive(implicit_l);
-    }
-  #endif
+  if (!implicit) {
+    LoRa->receive();
+  } else {
+    LoRa->receive(implicit_l);
+  }
 }
 
 inline void kiss_write_packet() {
@@ -1836,20 +1888,6 @@ void loop() {
       kiss_indicate_error(ERROR_MEMORY_LOW); memory_low = false;
     #endif
   }
-
-  #if MCU_VARIANT == MCU_NRF52
-    // Yield the loop task so the FreeRTOS idle task runs and the CPU enters WFI
-    // between iterations. The Seeeduino nRF5 core's loop_task only calls yield()
-    // (taskYIELD, non-blocking), so without this the loop task is always ready,
-    // the lower-priority idle task never runs, and the nRF52 core never sleeps
-    // -> steady ~64MHz draw 100% of the time. delay(1) = vTaskDelay(1): the loop
-    // task blocks one tick, idle runs, CPU WFI-sleeps. 1ms latency is negligible
-    // vs LoRa airtime, and radio/USB/BLE events wake the CPU immediately. Do NOT
-    // use raw __WFE(): BLE/SoftDevice is enabled on the T1000-E, so the safe
-    // sleep primitive is delay() (which uses sd_app_evt_wait under the hood when
-    // the SoftDevice is active).
-    delay(1);
-  #endif
 }
 
 void sleep_now() {
