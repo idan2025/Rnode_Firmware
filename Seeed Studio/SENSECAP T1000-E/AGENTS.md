@@ -73,6 +73,26 @@ verified): `Seeed Studio/SENSECAP T1000-E/working/` — source in
    leave CAD opt-in. Power can't be measured on the sealed unit, so verify by
    runtime-to-dead vs the <24h baseline (charge both fully, time to shutdown).
 
+### HW verify DONE on the DEFAULT build (2026-06-28, one unit) ✅
+- Flashed via `adafruit-nrfutil dfu serial --package <zip> -p /dev/ttyACM0`.
+  DFU entry: 1200-baud touch on /dev/ttyACM0 → re-enumerates to PID **2886:0057**
+  (not 0045). `adafruit-nrfutil` does NOT auto-touch; do the 1200-baud touch
+  manually first: `python3 -c "import serial,time; s=serial.Serial('/dev/ttyACM0',1200); time.sleep(0.1); s.close()"`.
+- After flash the on-device hash gate MISMATCHES (direct DFU doesn't update the
+  target hash) → radio won't arm. Fix: `python3 hash_sync.py /dev/ttyACM0 --write`
+  (writes the live hash back as the target, device saves + hard-resets). Re-run
+  `hash_sync.py` to confirm MATCH. This is the SAME recovery flow as a direct
+  adafruit-nrfutil flash on any nRF52 RNode.
+- Verify (`working/radio_verify.py`): rnodeconf `-i` → "Seeed SenseCAP
+  T1000-E 863-928 MHz", fw 1.86. KISS arm (917.8 MHz / 250 kHz / SF10 / 4-5 /
+  20 dBm) → radio_online, `CMD_STAT_CHTM` responds, 3× CMD_DATA TX packets →
+  CHTM changes (TX airtime advanced), noise floor **−127 dBm** (sane, silent
+  channel), NO `CMD_ERROR`. → **radio arms + TX path intact, no regression**
+  from Fix 1+2 (neither touches the radio). Default build binary 202304 B.
+- RX-over-the-air + runtime-to-dead still TODO (need the Heltec peer TX and a
+  full battery cycle — sealed unit, user-side). The default build keeps
+  continuous RX, so RX is expected unchanged from the 2026-06-21 re-verify.
+
 ### Merge gate (before touching `main`)
 - Default build compiles, flashes, provisions, TX+RX verified (no regression).
 - `--low-power` build compiles + (if tested) RX confirmed for the target link.
