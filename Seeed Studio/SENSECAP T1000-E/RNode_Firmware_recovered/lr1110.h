@@ -60,6 +60,14 @@ public:
   void onReceive(void(*callback)(int));
 
   void receive(int size = 0);
+  // Low-power RX: arms the LR11xx hardware-autonomous Rx Duty Cycle / CAD loop
+  // (CAD -> on activity, RX to receive the packet -> sleep -> repeat). The radio
+  // wakes the MCU on DIO1 only when a packet is received (RX_DONE), so the MCU can
+  // WFI-sleep between packets. See lr1110.cpp for the trade-off: this can miss
+  // packets from peers that transmit a short preamble, because CAD only catches
+  // a preamble that overlaps a CAD listening window. Only used when the sketch
+  // is built with -DLOW_POWER_RX; otherwise receive() (continuous RX) is used.
+  void receive_duty_cycle();
   void standby();
   void sleep();
   void reset(void);

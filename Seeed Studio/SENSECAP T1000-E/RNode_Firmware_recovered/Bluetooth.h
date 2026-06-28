@@ -604,6 +604,12 @@ char bt_devname[11];
       // Use Scan response for Name
       Bluefruit.ScanResponse.addName();
 
+      // Slow the advertising interval to cut BLE awake time (the T1000-E runs
+      // on battery with BLE as the main link). 160..1600 = 100ms min, 1s max
+      // (units of 0.625ms). Discoverability is preserved; only the gap between
+      // adv events grows, which is when the radio/SoC can idle.
+      Bluefruit.Advertising.setInterval(160, 1600);
+
       Bluefruit.Advertising.start(0);
 
       bt_state = BT_STATE_ON;

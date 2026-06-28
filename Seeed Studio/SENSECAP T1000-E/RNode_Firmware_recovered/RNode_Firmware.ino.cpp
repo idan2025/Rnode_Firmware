@@ -378,11 +378,18 @@ void setup() {
 }
 
 void lora_receive() {
-  if (!implicit) {
-    LoRa->receive();
-  } else {
-    LoRa->receive(implicit_l);
-  }
+  #if defined(LOW_POWER_RX)
+    // Opt-in low-power RX (LR1110 only): radio CAD/sleep duty-cycle loop, MCU
+    // WFI between packets. NOT the default -- can miss short-preamble peers.
+    // Enable by building with -DLOW_POWER_RX (see build_t1000e.sh).
+    LoRa->receive_duty_cycle();
+  #else
+    if (!implicit) {
+      LoRa->receive();
+    } else {
+      LoRa->receive(implicit_l);
+    }
+  #endif
 }
 
 inline void kiss_write_packet() {
@@ -1829,6 +1836,20 @@ void loop() {
       kiss_indicate_error(ERROR_MEMORY_LOW); memory_low = false;
     #endif
   }
+
+  #if MCU_VARIANT == MCU_NRF52
+    // Yield the loop task so the FreeRTOS idle task runs and the CPU enters WFI
+    // between iterations. The Seeeduino nRF5 core's loop_task only calls yield()
+    // (taskYIELD, non-blocking), so without this the loop task is always ready,
+    // the lower-priority idle task never runs, and the nRF52 core never sleeps
+    // -> steady ~64MHz draw 100% of the time. delay(1) = vTaskDelay(1): the loop
+    // task blocks one tick, idle runs, CPU WFI-sleeps. 1ms latency is negligible
+    // vs LoRa airtime, and radio/USB/BLE events wake the CPU immediately. Do NOT
+    // use raw __WFE(): BLE/SoftDevice is enabled on the T1000-E, so the safe
+    // sleep primitive is delay() (which uses sd_app_evt_wait under the hood when
+    // the SoftDevice is active).
+    delay(1);
+  #endif
 }
 
 void sleep_now() {
