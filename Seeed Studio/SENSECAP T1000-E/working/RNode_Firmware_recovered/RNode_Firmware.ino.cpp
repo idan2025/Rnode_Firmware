@@ -378,11 +378,18 @@ void setup() {
 }
 
 void lora_receive() {
-  if (!implicit) {
-    LoRa->receive();
-  } else {
-    LoRa->receive(implicit_l);
-  }
+  #if defined(LOW_POWER_RX)
+    // Opt-in low-power RX (LR1110 only): radio CAD/sleep duty-cycle loop, MCU
+    // WFI between packets. NOT the default -- can miss short-preamble peers.
+    // Enable by building with -DLOW_POWER_RX (see build_t1000e.sh).
+    LoRa->receive_duty_cycle();
+  #else
+    if (!implicit) {
+      LoRa->receive();
+    } else {
+      LoRa->receive(implicit_l);
+    }
+  #endif
 }
 
 inline void kiss_write_packet() {

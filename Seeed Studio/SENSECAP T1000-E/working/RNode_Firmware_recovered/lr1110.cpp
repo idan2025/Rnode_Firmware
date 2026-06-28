@@ -421,6 +421,42 @@ void lr1110::receive(int size) {
   lr11xx_radio_set_rx_with_timeout_in_rtc_step(CTX, 0xFFFFFF);
 }
 
+void lr1110::receive_duty_cycle() {
+  // Low-power RX: arms the LR11xx hardware-autonomous Rx Duty Cycle / CAD loop.
+  // The radio performs CAD (channel activity detection) for rx_period; if it
+  // detects a LoRa preamble it auto-enters RX (cad_exit_mode = RX) and delivers
+  // the packet via RX_DONE (same IRQ/path as continuous RX), then sleeps for
+  // sleep_period and repeats -- all in silicon, waking the MCU on DIO1 only on
+  // RX_DONE. Combined with the loop()'s delay(1) (CPU WFI between iterations),
+  // both the MCU and the radio sleep between packets.
+  //
+  // TRADE-OFF: CAD only catches a preamble that OVERLAPS a CAD listening
+  // window. A peer transmitting a standard short preamble (~8 symbols) can
+  // miss a window and the packet is lost. Reliable low-power RX therefore
+  // needs peers that transmit a long preamble (or a rendezvous schedule). This
+  // is why it is opt-in (build flag LOW_POWER_RX) and NOT the default: the
+  // default build keeps continuous RX so no packets are missed.
+  //
+  // Timings (rx_period=62ms, sleep_period=200ms) are conservative: ~24% duty.
+  // Tune rx_period/sleep_period here to trade RX latency/reliability for power.
+  _payloadLength = MAX_PKT_LENGTH;
+  explicitHeaderMode();
+  setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
+
+  lr11xx_radio_cad_params_t cad_params = {0};
+  cad_params.cad_symb_nb      = 8;                                  // SF10-appropriate symbol count
+  cad_params.cad_detect_peak  = 0x32;                               // Semtech default ratio
+  cad_params.cad_detect_min   = 0x0A;                               // Semtech default floor
+  cad_params.cad_exit_mode    = LR11XX_RADIO_CAD_EXIT_MODE_RX;       // CAD detected -> auto RX
+  cad_params.cad_timeout      = 0;
+  lr11xx_radio_set_cad_params(CTX, &cad_params);
+
+  lr11xx_system_clear_irq_status(CTX, LR11XX_SYSTEM_IRQ_ALL_MASK);
+  // RX_DONE is already armed by onReceive(); the radio auto-loops on
+  // CAD/timeout, so no extra IRQs or MCU re-arming are needed.
+  lr11xx_radio_set_rx_duty_cycle(CTX, 62, 200, LR11XX_RADIO_RX_DUTY_CYCLE_MODE_CAD);
+}
+
 void lr1110::standby() { lr11xx_system_set_standby(CTX, LR11XX_SYSTEM_STANDBY_CFG_RC); }
 void lr1110::sleep() {
   lr11xx_system_sleep_cfg_t sleep_cfg = {0};

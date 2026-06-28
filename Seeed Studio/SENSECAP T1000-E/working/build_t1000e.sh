@@ -53,9 +53,20 @@ EOF
 
 echo ">> Compiling (FQBN Seeeduino:nrf52:tracker_t1000_e_lorawan, -DBOARD_MODEL=0x52) ..."
 export PATH="$VENV_BIN:$PATH"
+
+# Default build = continuous RX (reliable, no missed packets). Pass --low-power
+# to build the experimental low-power variant: the LR1110 runs a CAD/sleep RX
+# duty-cycle loop and the MCU WFI-sleeps between packets. ONLY for peers that
+# transmit a long preamble, otherwise CAD can miss packets. See AGENTS.md.
+LP_FLAG=""
+if [[ "${1:-}" == "--low-power" || "${2:-}" == "--low-power" ]]; then
+  echo ">> LOW_POWER_RX=1 (CAD duty-cycle RX -- read the trade-off in AGENTS.md)"
+  LP_FLAG=" -DLOW_POWER_RX"
+fi
+
 "$BIN" --config-file "$CFG" compile \
   --fqbn Seeeduino:nrf52:tracker_t1000_e_lorawan -e \
-  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x52" \
+  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x52${LP_FLAG}" \
   "$DST"
 
 ZIP="$DST/build/Seeeduino.nrf52.tracker_t1000_e_lorawan/RNode_Firmware.ino.zip"
