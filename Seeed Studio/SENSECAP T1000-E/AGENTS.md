@@ -93,6 +93,20 @@ verified): `Seeed Studio/SENSECAP T1000-E/working/` — source in
   full battery cycle — sealed unit, user-side). The default build keeps
   continuous RX, so RX is expected unchanged from the 2026-06-21 re-verify.
 
+### CAD-as-default RUNTIME FAILS — do NOT ship CAD as the webflasher default (2026-06-28) ❌
+- Tried baking `LOW_POWER_RX` CAD RX into the default build (BOARD_MODEL 0x52).
+  Built clean (202336 B). Flashed + `radio_verify.py` on the unit: `CHTM before
+  TX: None` (radio does NOT arm under CAD duty-cycle), then device USB CDC
+  stalls after the first TX (host writes block, python hangs). Reproduced on a
+  clean re-flash. So CAD duty-cycle RX is NOT runtime-functional on this board
+  with the current `receive_duty_cycle()`/IRQ path — likely CAD/timeout IRQs not
+  handled in `handleDio0Rise` (only `RX_DONE` is) starving the loop, or the duty
+  cycle command leaves the radio in a state where SPI status reads fail.
+- **CAD stays opt-in (`-DLOW_POWER_RX`) and OFF the webflasher.** Anyone wanting
+  to ship CAD as default MUST first fix the IRQ/SPI hang in `lr1110.cpp`
+  (`handleDio0Rise` + `onReceive` CAD IRQ mask + re-arm) and re-pass
+  `radio_verify.py` on HW. Until then continuous RX is the only verified RX mode.
+
 ### Merge gate (before touching `main`)
 - Default build compiles, flashes, provisions, TX+RX verified (no regression).
 - `--low-power` build compiles + (if tested) RX confirmed for the target link.
