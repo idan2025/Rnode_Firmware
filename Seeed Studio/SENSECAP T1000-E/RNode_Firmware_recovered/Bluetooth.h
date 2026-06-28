@@ -504,6 +504,11 @@ char bt_devname[11];
     Bluefruit.Advertising.addService(SerialBT);
     Bluefruit.ScanResponse.clearData();
     Bluefruit.ScanResponse.addName();
+    // Re-apply the slow advertising interval here too, otherwise the nRF52
+    // SoftDevice restarts adv at the fast default after a disconnect and the
+    // battery saving from bt_start()'s setInterval(160,1600) is lost until the
+    // next reboot. Same 100ms min / 1s max as the initial start.
+    Bluefruit.Advertising.setInterval(160, 1600);
     Bluefruit.Advertising.start(0);
   }
 
