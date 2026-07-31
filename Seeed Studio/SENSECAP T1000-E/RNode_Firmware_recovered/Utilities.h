@@ -386,10 +386,12 @@ uint8_t boot_vector = 0x00;
 		// Combined LED behaviour: pin_led_rx stays a dedicated, continuously
 		// (dcd-driven) RX activity indicator, unchanged. pin_led_tx keeps its
 		// TX-flash duty AND doubles, whenever it isn't actively flashing for a
-		// TX burst, as a Meshtastic-style status LED: a mostly-on heartbeat
-		// (brief off-pulse once a second) that switches to a fast blink while
-		// BLE pairing is active. TX flashes are short (milliseconds) so a rare
-		// visual collision with the heartbeat tick is not noticeable.
+		// TX burst, as a Meshtastic-style status LED: a mostly-OFF heartbeat
+		// with a brief on-flash once a second (Meshtastic's own StatusLEDModule
+		// spends 999ms off and only 1ms on per cycle - a quick pulse, not a
+		// mostly-lit LED), switching to a fast blink while BLE pairing is
+		// active. TX flashes are short (milliseconds) so a rare visual
+		// collision with the heartbeat tick is not noticeable.
 		bool t1000e_status_led_on = false;
 		uint32_t t1000e_status_led_last = 0;
 
@@ -402,7 +404,7 @@ uint8_t boot_vector = 0x00;
 					if (t1000e_status_led_on) { led_tx_on(); } else { led_tx_off(); }
 				}
 			} else {
-				bool want_on = (now % 1000) >= 20;
+				bool want_on = (now % 1000) < 20;
 				if (want_on != t1000e_status_led_on) {
 					t1000e_status_led_on = want_on;
 					if (want_on) { led_tx_on(); } else { led_tx_off(); }
