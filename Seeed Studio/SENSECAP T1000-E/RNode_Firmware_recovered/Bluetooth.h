@@ -46,6 +46,12 @@
 #define BLE_FLUSH_TIMEOUT 20
 uint32_t bt_pairing_started = 0;
 
+// Fixed BLE pairing PIN, same fixed default (123456) Meshtastic ships for
+// this hardware, instead of a random passkey re-generated on every pairing
+// attempt. Trades a small amount of pairing security for a predictable,
+// user-communicable PIN.
+#define BLE_FIXED_PIN 123456
+
 #define BT_DEV_ADDR_LEN 6
 #define BT_DEV_HASH_LEN 16
 uint8_t dev_bt_mac[BT_DEV_ADDR_LEN];
@@ -514,7 +520,7 @@ char bt_devname[11];
 
   void bt_update_passkey() {
     // Serial.println("Update passkey");
-    pairing_pin = random(899999)+100000;
+    pairing_pin = BLE_FIXED_PIN;
     bt_ssp_pin = pairing_pin;
   }
 
@@ -540,7 +546,7 @@ char bt_devname[11];
       Bluefruit.autoConnLed(false);
       if (Bluefruit.begin()) {
         uint32_t pin = bt_get_passkey();
-        char pin_char[6];
+        char pin_char[7]; // 6-digit PIN + null terminator
         sprintf(pin_char,"%lu", pin);
 
         Bluefruit.setTxPower(8);    // Check bluefruit.h for supported values
@@ -570,7 +576,12 @@ char bt_devname[11];
         #endif
         unsigned char *hash = MD5::make_hash(data, BT_DEV_ADDR_LEN);
         memcpy(bt_dh, hash, BT_DEV_HASH_LEN);
-        sprintf(bt_devname, "RNode %02X%02X", bt_dh[14], bt_dh[15]);
+        // Name the device after the last 4 hex characters of its actual BLE
+        // MAC address (gap_addr.addr[] is little-endian, so addr[1],addr[0]
+        // is the MAC's last two octets in normal display order), the same
+        // convention Meshtastic uses for its device names, instead of the
+        // MD5-derived bytes used previously.
+        sprintf(bt_devname, "RNode %02X%02X", gap_addr.addr[1], gap_addr.addr[0]);
         free(data);
 
         bt_ready = true;
@@ -637,7 +648,7 @@ char bt_devname[11];
     if (bt_state == BT_STATE_OFF) bt_start();
 
     uint32_t pin = bt_get_passkey();
-    char pin_char[6];
+    char pin_char[7]; // 6-digit PIN + null terminator
     sprintf(pin_char,"%lu", pin);
     Bluefruit.Security.setPIN(pin_char);
 

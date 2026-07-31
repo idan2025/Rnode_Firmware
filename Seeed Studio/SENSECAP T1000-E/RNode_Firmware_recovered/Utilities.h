@@ -382,6 +382,45 @@ uint8_t boot_vector = 0x00;
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
 		void led_id_on()  { }
 		void led_id_off() { }
+
+		// Combined LED behaviour: pin_led_rx stays a dedicated, continuously
+		// (dcd-driven) RX activity indicator, unchanged. pin_led_tx keeps its
+		// TX-flash duty AND doubles, whenever it isn't actively flashing for a
+		// TX burst, as a Meshtastic-style status LED: a mostly-on heartbeat
+		// (brief off-pulse once a second) that switches to a fast blink while
+		// BLE pairing is active. TX flashes are short (milliseconds) so a rare
+		// visual collision with the heartbeat tick is not noticeable.
+		bool t1000e_status_led_on = false;
+		uint32_t t1000e_status_led_last = 0;
+
+		void update_status_led() {
+			uint32_t now = millis();
+			if (bt_state == BT_STATE_PAIRING) {
+				if (now - t1000e_status_led_last >= 250) {
+					t1000e_status_led_last = now;
+					t1000e_status_led_on = !t1000e_status_led_on;
+					if (t1000e_status_led_on) { led_tx_on(); } else { led_tx_off(); }
+				}
+			} else {
+				bool want_on = (now % 1000) >= 20;
+				if (want_on != t1000e_status_led_on) {
+					t1000e_status_led_on = want_on;
+					if (want_on) { led_tx_on(); } else { led_tx_off(); }
+				}
+			}
+		}
+
+		#if HAS_BUZZER == true
+			// Short, blocking beep for user-facing button/BLE feedback. Blocking
+			// is consistent with the existing led_indicate_* helpers below, which
+			// also delay() during deliberate, low-frequency UI events (not the
+			// radio hot path).
+			void buzzer_beep(uint16_t freq_hz, uint16_t duration_ms) {
+				tone(pin_buzzer, freq_hz, duration_ms);
+				delay(duration_ms);
+				noTone(pin_buzzer);
+			}
+		#endif
 	#endif
 #endif
 
