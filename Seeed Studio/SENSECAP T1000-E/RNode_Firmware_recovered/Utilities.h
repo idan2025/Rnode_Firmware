@@ -1423,6 +1423,11 @@ void setTXPower() {
 		if (model == MODEL_B4) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_B8) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_B9) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
+		// T1000-E (LR1110): lr1110::setTxPower ignores outputPin and selects
+		// LP vs HP PA by level (<=15 dBm LP, 16-22 dBm HP), so the boost-pin
+		// arg is harmless. Without this branch the radio stays at the init
+		// default of 2 dBm and rnodeconf --txp never reaches the PA.
+		if (model == MODEL_B5) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 
 		if (model == MODEL_C4) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_C9) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
