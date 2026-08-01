@@ -756,7 +756,7 @@ int8_t  led_standby_direction = 0;
 	// the two into a combined heartbeat+activity indicator is future work.
 	unsigned long t1000e_heartbeat_last_ms = 0;
 	bool t1000e_heartbeat_lit = false;
-	#define T1000E_HEARTBEAT_PERIOD_MS 1000
+	#define T1000E_HEARTBEAT_PERIOD_MS 3000
 	#define T1000E_HEARTBEAT_ON_MS 50
 
 	void led_indicate_heartbeat() {
