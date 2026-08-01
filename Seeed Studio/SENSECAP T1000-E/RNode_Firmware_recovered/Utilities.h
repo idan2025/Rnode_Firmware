@@ -733,6 +733,50 @@ int8_t  led_standby_direction = 0;
   #endif
 #endif
 
+#if BOARD_MODEL == BOARD_T1000E
+	// The T1000-E has exactly one physical LED (green, pin_led_rx -- see
+	// Boards.h). pin_led_tx (P0.03) doesn't drive anything visible on this
+	// board (confirmed against Seeed's own pinout table and Meshtastic's
+	// variant.h, neither of which list any second LED), so the generic
+	// two-LED led_indicate_standby()/led_indicate_not_ready() "breathing"
+	// patterns above are silently invisible here: their blink lives on
+	// led_tx, and their real (green) LED writes are just repeated led_rx_off()
+	// calls. On top of that, those functions only ever run pre-arm
+	// (radio_online == false), so once any host (rnsd/NomadNet) arms the
+	// radio -- the normal, almost-immediate case -- there was no visible
+	// heartbeat here at all, armed or not.
+	//
+	// This is a dedicated, always-on heartbeat instead: a short ~50ms flash
+	// once per second on the single LED, modeled on Meshtastic's own
+	// heartbeat for this exact board (StatusLEDModule.cpp: brief flash,
+	// ~1s period). Called unconditionally from loop() regardless of
+	// radio_online, so it keeps beating during normal armed operation, not
+	// just at boot. It intentionally has priority over the real-time RX
+	// carrier-detect blink for now (see check_modem_status()) -- merging
+	// the two into a combined heartbeat+activity indicator is future work.
+	unsigned long t1000e_heartbeat_last_ms = 0;
+	bool t1000e_heartbeat_lit = false;
+	#define T1000E_HEARTBEAT_PERIOD_MS 1000
+	#define T1000E_HEARTBEAT_ON_MS 50
+
+	void led_indicate_heartbeat() {
+		unsigned long now = millis();
+		unsigned long since = now - t1000e_heartbeat_last_ms;
+		if (!t1000e_heartbeat_lit) {
+			if (since >= T1000E_HEARTBEAT_PERIOD_MS) {
+				t1000e_heartbeat_last_ms = now;
+				t1000e_heartbeat_lit = true;
+				led_rx_on();
+			}
+		} else {
+			if (since >= T1000E_HEARTBEAT_ON_MS) {
+				t1000e_heartbeat_lit = false;
+				led_rx_off();
+			}
+		}
+	}
+#endif
+
 #if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
 	void led_indicate_not_ready() {
 		led_standby_ticks++;

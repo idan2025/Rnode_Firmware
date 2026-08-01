@@ -1781,7 +1781,13 @@ void loop() {
 
     tx_queue_handler();
     check_modem_status();
-  
+
+    #if BOARD_MODEL == BOARD_T1000E
+      // Keep the heartbeat beating during normal armed operation, not just
+      // pre-arm -- see led_indicate_heartbeat() in Utilities.h for why.
+      if (hw_ready) { led_indicate_heartbeat(); }
+    #endif
+
   } else {
     if (hw_ready) {
       if (console_active) {
@@ -1789,7 +1795,11 @@ void loop() {
           console_loop();
         #endif
       } else {
-        led_indicate_standby();
+        #if BOARD_MODEL == BOARD_T1000E
+          led_indicate_heartbeat();
+        #else
+          led_indicate_standby();
+        #endif
       }
     } else {
 
