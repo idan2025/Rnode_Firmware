@@ -25,6 +25,24 @@ rnode_firmware_t1000e_lr1110_continuousrx.zip
 # ---- Editor / agent local ----
 .claude/
 .DS_Store
+AGENTS.md
+Result.md
+agent_memory/
+CLAUDE.md
+SCRATCHPAD.md
+
+# ---- Agent dev/test/diagnostic scripts (not needed to build/flash/use the device) ----
+bridge_test.py
+lxmf_live.py
+node_soak.py
+radio_verify.py
+read_diag.py
+rx_diag.py
+rx_monitor.py
+
+# ---- Debug firmware builds (keep only the clean production image) ----
+*_debug.zip
+*_DEBUG*.zip
 
 # ---- Ready-to-build sketch snapshot (regenerable via build_t1000e.sh) ----
 t1000e_ready_sketch.tar.gz
