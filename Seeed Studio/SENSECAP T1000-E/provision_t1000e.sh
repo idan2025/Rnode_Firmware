@@ -22,7 +22,18 @@
 # moment. Every rnodeconf call below is therefore preceded by warm_port() (a
 # short raw-KISS drain) and retried across the flaky probe + re-enumeration.
 set -u
-VENV=/home/idan/Downloads/venvs/rns
+# Use the provided venv, or auto-detect: check VIRTUAL_ENV (already activated),
+# then common RNS venv locations, then fall back to system Python.
+if [ -z "${VENV:-}" ]; then
+  if [ -n "${VIRTUAL_ENV:-}" ]; then
+    VENV="$VIRTUAL_ENV"
+  elif command -v rnodeconf >/dev/null 2>&1; then
+    VENV="$(dirname "$(dirname "$(command -v rnodeconf)")")"
+  else
+    echo "[provision][ERROR] no venv found. Activate your RNS venv first or set VENV=<path>" >&2
+    exit 1
+  fi
+fi
 # rnodeconf shells out to adafruit-nrfutil (DFU flasher) by name, so the venv
 # bin MUST be on PATH or flashing silently aborts.
 export PATH="$VENV/bin:$PATH"
