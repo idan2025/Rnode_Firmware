@@ -92,6 +92,24 @@ Two USB-side fixes the mainline firmware's nRF52 path didn't cover for this boar
 Both verified on hardware, and the radio was re-checked afterwards — TX, RX, and a clean
 −112 dBm noise floor all still good.
 
+## Known limitation: BLE pairing PIN is random, but there's no display to show it
+
+The firmware generates a random 6-digit BLE pairing PIN each time (`Bluetooth.h`) and
+reports it back over USB serial as a KISS frame (`kiss_indicate_btpin()` /
+`CMD_BT_PIN`), for a companion app to catch and show you *while wired in over USB at
+the same time as pairing over BLE*. On this board there's no display to show the PIN
+another way, and — as far as we've found — no shipping companion app (Sideband
+included) actually implements catching/showing that KISS frame today. In practice
+this can leave BLE pairing with no visible PIN at all.
+
+A fixed/default PIN (Meshtastic-style: a known default the user can later change) is
+the obvious fix, and it's a trivial one-line firmware change
+(`pairing_pin = <constant>` instead of `random(...)`) — deliberately not done yet,
+since a fixed PIN is a real (if arguably academic, given the current PIN is already
+effectively unviewable) security trade-off, and it'd be nice to pair it with an actual
+app-side "read/set the PIN" flow rather than just hardcoding a value nobody can change
+without reflashing. Revisit if this becomes a real blocker for someone.
+
 ## What's in here
 
 ```
