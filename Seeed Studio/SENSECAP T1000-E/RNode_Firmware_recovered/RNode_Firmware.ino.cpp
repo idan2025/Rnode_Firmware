@@ -224,6 +224,12 @@ void setup() {
     pinMode(pin_led_tx, OUTPUT);
   #endif
 
+  #if HAS_BUZZER == true
+    pinMode(pin_buzzer_en, OUTPUT);
+    digitalWrite(pin_buzzer_en, HIGH);
+    pinMode(pin_buzzer, OUTPUT);
+  #endif
+
   #if HAS_TCXO == true
     if (pin_tcxo_enable != -1) {
         pinMode(pin_tcxo_enable, OUTPUT);
@@ -1835,6 +1841,10 @@ void loop() {
     input_read();
   #endif
 
+  #if BOARD_MODEL == BOARD_T1000E
+    update_status_led();
+  #endif
+
   if (memory_low) {
     #if PLATFORM == PLATFORM_ESP32
       if (esp_get_free_heap_size() < 8192) {
@@ -1910,12 +1920,13 @@ void sleep_now() {
         // SYSTEMOFF, which would freeze the LED wherever the heartbeat
         // blink happened to be (on or off) at the moment of shutdown.
         led_rx_off();
-        // T1000-E's button is active-HIGH with a pull-down (see Input.h),
-        // so wake-sense must be pull-down + sense-HIGH here too, not the
-        // default active-LOW pull-up + sense-LOW used by every other board.
-        nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_SENSE_HIGH);
-      #else
+      #endif
+      #if BUTTON_ACTIVE_LOW
         nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+      #else
+        // External pull-down board: idle LOW, wake when the button pulls
+        // the pin HIGH.
+        nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_SENSE_HIGH);
       #endif
       NRF_POWER->SYSTEMOFF = 1;
     #endif
@@ -1937,9 +1948,17 @@ void button_event(uint8_t event, unsigned long duration) {
         #endif
       } else if (duration > 5000) {
         #if HAS_BLUETOOTH || HAS_BLE
-          if (bt_state != BT_STATE_CONNECTED) { bt_enable_pairing(); }
+          if (bt_state != BT_STATE_CONNECTED) {
+            #if HAS_BUZZER
+              buzzer_beep(1800, 80); delay(40); buzzer_beep(2200, 80);
+            #endif
+            bt_enable_pairing();
+          }
         #endif
       } else if (duration > 700) {
+        #if HAS_BUZZER
+          buzzer_beep(1200, 60); delay(40); buzzer_beep(800, 120);
+        #endif
         #if HAS_SLEEP
           sleep_now();
         #endif
@@ -1947,9 +1966,15 @@ void button_event(uint8_t event, unsigned long duration) {
         #if HAS_BLUETOOTH || HAS_BLE
         if (bt_state != BT_STATE_CONNECTED) {
           if (bt_state == BT_STATE_OFF) {
+            #if HAS_BUZZER
+              buzzer_beep(1800, 60);
+            #endif
             bt_start();
             bt_conf_save(true);
           } else {
+            #if HAS_BUZZER
+              buzzer_beep(900, 60);
+            #endif
             bt_stop();
             bt_conf_save(false);
           }
