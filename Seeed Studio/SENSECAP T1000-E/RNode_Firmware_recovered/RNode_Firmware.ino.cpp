@@ -1911,6 +1911,14 @@ void sleep_now() {
         // the pin HIGH.
         nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_SENSE_HIGH);
       #endif
+      // Turn the status LEDs off before cutting power — the nRF52's GPIO
+      // output level is otherwise retained through SYSTEMOFF, which would
+      // freeze whichever LED (heartbeat on led_tx, carrier-detect on led_rx)
+      // happened to be lit at the moment of shutdown.
+      #if BOARD_MODEL == BOARD_T1000E
+        led_tx_off();
+        led_rx_off();
+      #endif
       NRF_POWER->SYSTEMOFF = 1;
     #endif
   #endif
