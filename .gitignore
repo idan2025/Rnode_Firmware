@@ -26,5 +26,9 @@ rnode_firmware_t1000e_lr1110_continuousrx.zip
 .claude/
 .DS_Store
 
+# ---- Debug firmware builds (keep only the clean production image) ----
+*_debug.zip
+*_DEBUG*.zip
+
 # ---- Ready-to-build sketch snapshot (regenerable via build_t1000e.sh) ----
 t1000e_ready_sketch.tar.gz
