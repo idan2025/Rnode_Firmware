@@ -1736,6 +1736,14 @@ void tx_queue_handler() {
 void work_while_waiting() { loop(); }
 
 void loop() {
+  #if BOARD_MODEL == BOARD_T1000E
+    // Unconditional: this is a "device is alive" indicator, not a "radio
+    // is ready" indicator, so it must not depend on hw_ready/radio_online
+    // (this exact unit currently boots with hw_ready == false - the device
+    // has never been through rnodeconf's EEPROM provisioning/signing step -
+    // and the heartbeat should still work regardless of that).
+    led_indicate_heartbeat();
+  #endif
   if (radio_online) {
     #if MCU_VARIANT == MCU_ESP32
       modem_packet_t *modem_packet = NULL;
@@ -1782,12 +1790,6 @@ void loop() {
     tx_queue_handler();
     check_modem_status();
 
-    #if BOARD_MODEL == BOARD_T1000E
-      // Keep the heartbeat beating during normal armed operation, not just
-      // pre-arm -- see led_indicate_heartbeat() in Utilities.h for why.
-      if (hw_ready) { led_indicate_heartbeat(); }
-    #endif
-
   } else {
     if (hw_ready) {
       if (console_active) {
@@ -1795,9 +1797,7 @@ void loop() {
           console_loop();
         #endif
       } else {
-        #if BOARD_MODEL == BOARD_T1000E
-          led_indicate_heartbeat();
-        #else
+        #if BOARD_MODEL != BOARD_T1000E
           led_indicate_standby();
         #endif
       }
@@ -1904,7 +1904,19 @@ void sleep_now() {
         delay(100);
       #endif
       sd_power_gpregret_set(0, 0x6d);
-      nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+      #if BOARD_MODEL == BOARD_T1000E
+        // Explicitly turn the heartbeat LED off before cutting power - the
+        // nRF52's GPIO output level is otherwise retained through
+        // SYSTEMOFF, which would freeze the LED wherever the heartbeat
+        // blink happened to be (on or off) at the moment of shutdown.
+        led_rx_off();
+        // T1000-E's button is active-HIGH with a pull-down (see Input.h),
+        // so wake-sense must be pull-down + sense-HIGH here too, not the
+        // default active-LOW pull-up + sense-LOW used by every other board.
+        nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_SENSE_HIGH);
+      #else
+        nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+      #endif
       NRF_POWER->SYSTEMOFF = 1;
     #endif
   #endif

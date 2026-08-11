@@ -19,8 +19,24 @@
   
   #define PIN_BUTTON pin_btn_usr1
 
-  #define PRESSED LOW
-  #define RELEASED HIGH
+  // T1000-E wires its user button active-HIGH with an external/internal
+  // pull-down (confirmed against Meshtastic's variant.h for this exact
+  // board: BUTTON_ACTIVE_LOW=false, BUTTON_ACTIVE_PULLUP=false, pull-down
+  // sense type). Every other supported board here is active-LOW with an
+  // internal pull-up, which is why PRESSED/RELEASED were hardcoded that
+  // way. Without this override, digitalRead(PIN_BUTTON) never toggles on
+  // a T1000-E (idle-HIGH from the pull-up, driven-HIGH on press too), so
+  // input_read() never detects a state change and button_event() is
+  // never called at all, for any hold duration.
+  #if BOARD_MODEL == BOARD_T1000E
+    #define PRESSED HIGH
+    #define RELEASED LOW
+    #define BUTTON_PINMODE INPUT_PULLDOWN
+  #else
+    #define PRESSED LOW
+    #define RELEASED HIGH
+    #define BUTTON_PINMODE INPUT_PULLUP
+  #endif
 
   #define EVENT_ALL                 0x00
   #define EVENT_CLICKS              0x01
@@ -42,7 +58,7 @@
   void button_event(uint8_t event, unsigned long duration);
 
   void input_init() {
-    pinMode(PIN_BUTTON, INPUT_PULLUP);
+    pinMode(PIN_BUTTON, BUTTON_PINMODE);
   }
 
   void input_get_all_events() {
