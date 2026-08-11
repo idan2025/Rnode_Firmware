@@ -19,8 +19,14 @@
   
   #define PIN_BUTTON pin_btn_usr1
 
-  #define PRESSED LOW
-  #define RELEASED HIGH
+  #if BUTTON_ACTIVE_LOW
+    #define PRESSED LOW
+    #define RELEASED HIGH
+  #else
+    // Board has an external pull-down: idle reads LOW, pressed reads HIGH.
+    #define PRESSED HIGH
+    #define RELEASED LOW
+  #endif
 
   #define EVENT_ALL                 0x00
   #define EVENT_CLICKS              0x01
@@ -42,7 +48,11 @@
   void button_event(uint8_t event, unsigned long duration);
 
   void input_init() {
-    pinMode(PIN_BUTTON, INPUT_PULLUP);
+    #if BUTTON_ACTIVE_LOW
+      pinMode(PIN_BUTTON, INPUT_PULLUP);
+    #else
+      pinMode(PIN_BUTTON, INPUT_PULLDOWN);
+    #endif
   }
 
   void input_get_all_events() {

@@ -178,6 +178,17 @@
   #define PIN_DISP_SLEEP -1
   #define VALIDATE_FIRMWARE true
 
+  // User button electrical polarity. Most boards wire the button to an
+  // internal pull-up (idle HIGH, pressed pulls to GND = LOW). Boards with
+  // an external pull-down (idle LOW, pressed reads HIGH) must override this
+  // to false. See BOARD_T1000E below for such a board.
+  #define BUTTON_ACTIVE_LOW true
+
+  // Onboard piezo buzzer, used for audible feedback on button/BLE state
+  // changes. Off by default; boards with a buzzer override to true and
+  // define pin_buzzer_en / pin_buzzer.
+  #define HAS_BUZZER false
+
   #if defined(ENABLE_TCXO)
       #define HAS_TCXO true
   #endif
@@ -924,6 +935,15 @@
       #define HAS_BUSY true
       #define HAS_INPUT true
       #define HAS_SLEEP true
+      // The T1000-E's user button has an external pull-down (idle LOW,
+      // pressed reads HIGH) - confirmed against both Meshtastic's variant.h
+      // (BUTTON_ACTIVE_LOW false / BUTTON_SENSE_TYPE pull-down) and a third
+      // -party Arduino sketch for this board ("T1000-E has inverted input").
+      // The opposite of most other RNode boards.
+      #define BUTTON_ACTIVE_LOW false
+      // Onboard piezo buzzer (Seeed BSP: BUZZER_EN_PIN P1.05, PIN_BUZZER
+      // P0.25 PWM). BUZZER_EN must be driven HIGH to enable the buzzer amp.
+      #define HAS_BUZZER true
       #define CONFIG_UART_BUFFER_SIZE 6144
       #define CONFIG_QUEUE_SIZE 6144
       #define CONFIG_QUEUE_MAX_LENGTH 200
@@ -934,6 +954,10 @@
 
       // Button
       const int pin_btn_usr1 = 6;  // PIN_BUTTON1
+
+      // Buzzer
+      const int pin_buzzer_en = 37; // P1.05, BUZZER_EN (drive HIGH to enable)
+      const int pin_buzzer = 25;    // P0.25, PWM buzzer output
 
       // LEDs
       const int pin_led_rx = 24;   // LED_GREEN
