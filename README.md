@@ -104,25 +104,14 @@ Seeed Studio/
     build_t1000e.sh              one-command reconstruct-sketch + compile (+ --low-power)
     hash_sync.py / read_diag.py / lxmf_live.py   bring-up & diagnostic tools
     AGENTS.md / Result.md        engineering log + results
-  XIAO nRF52840 Wio-SX1262/
-    RNode_Firmware/              custom firmware source (LR1110 driver + lr11xx SDK)
-    flash.uf2                    prebuilt DFU package
-    provision_xiao.py            provision + BLE enable
-    build_xiao.sh / build_xiao_adafruit.sh   build scripts (see board notes below)
 firmware/
   rnode_firmware_t1000e.zip      canonical image the web flasher pulls
 ```
 
-## Also in here: Seeed XIAO nRF52840 + Wio-SX1262
-
-Same idea, different board — the XIAO nRF52840 paired with Seeed's Wio-SX1262 expansion
-board also gets a working LR1110-based RNode port (`Seeed Studio/XIAO nRF52840
-Wio-SX1262/`). One nRF52-specific gotcha worth knowing if you build for it yourself: the
-Adafruit nRF52 bootloader hands off with the SoftDevice (BLE stack) already disabled, and
-re-enabling it must be a single clean `Bluefruit.begin()` — calling
-`sd_softdevice_disable()` first and then re-enabling hangs at boot (blue-only LED, no
-serial, no BLE). Flash with `build_xiao_adafruit.sh` (bundles the correct Adafruit
-board core) or `build_xiao.sh`, then provision with `provision_xiao.py`.
+> **Seeed XIAO nRF52840 + Wio-SX1262 port:** a port for that board exists but is **not
+> working yet** — BLE hangs at boot, and provisioning isn't compatible with `rnodeconf`.
+> It's kept on the `wip/xiao-port` branch (not on `main`) so it doesn't ship as a
+> working build. Track / contribute there; not ready for daily use.
 
 ## Build it yourself
 
