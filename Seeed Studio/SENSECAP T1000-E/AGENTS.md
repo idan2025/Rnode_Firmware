@@ -229,18 +229,20 @@ Remaining optional polish: the temporary `stat_rx`/`stat_tx` diagnostic counters
 
 8. **`set_tx_params` power value wrong (v1.4):** Seeed's BSP (`ral_lr11xx_bsp_get_tx_cfg`) feeds `lr11xx_radio_set_tx_params` a per-dBm calibrated `chip_output_pwr_in_dbm_configured` value from the `.power` field of `pa_cfg_table[]` — **not** the user-requested dBm. The previous firmware passed the raw `level` straight through. For the HP range this happened to coincide at 22 dBm (Seeed also sends 22 there because the HP PA is saturated — output is controlled by `pa_duty_cycle`/`pa_hp_sel`, not `tx_params`), but for 16-21 dBm the firmware sent 16-21 while Seeed sends 22. For the LP range the firmware sent the requested dBm while Seeed sends an offset value (e.g. requested 10 dBm → Seeed sends `tx_params(13)`). Fixed by adding an `lr1110_pa_lp_tx_power[]` table (the Seeed `.power` values for LP) and holding the HP `tx_params` at 22 (the constant Seeed uses for the saturated HP PA). The user's configured TXP still selects distinct bias points per dBm via the duty_cycle/hp_sel tables — only the saturated chip register field is held at the Seeed-specified constant. Verified across all 40 entries.
 
-9. **Audit confirmed correct (v1.4, no fix needed):** the following were checked against Seeed's BSP / RadioLib / Meshtastic's T1000-E variant and are already correct in this firmware — no change:
-   - Regulator mode: `LR11XX_SYSTEM_REG_MODE_DCDC` (matches Seeed's `smtc_shield_lr11xx_get_reg_mode`).
-   - Calibration mask: `LF_RC | HF_RC | PLL | ADC | IMG | PLL_TX` = 0x3F (matches RadioLib's `RADIOLIB_LR11X0_CALIBRATE_ALL`).
-   - PA supply selection: LP → `PA_REG_SUPPLY_VREG`, HP → `PA_REG_SUPPLY_VBAT` (matches Seeed + RadioLib).
-   - LP/HP threshold: `level <= 15 → LP`, `16..22 → HP` (matches Seeed's table coverage + RadioLib's `power > 14`).
-   - RX boosted gain: `lr11xx_radio_cfg_rx_boosted(CTX, true)` (matches Meshtastic's `sx126x_rx_boosted_gain` default on the T1000-E variant).
-   - Ramp time: `LR11XX_RADIO_RAMP_48_US` (matches Seeed's `pa_ramp_time`).
-   - Sync word: `SYNC_WORD_PRIVATE` (standard LoRa private, matches RadioLib/Meshtastic default).
-   - CRC: enabled (matches).
-   - Standby config: `STANDBY_CFG_RC` (matches RadioLib; XOSC would be marginally better with TCXO but RC is the standard and not a range bug).
-   - RX continuous mode: `set_rx_with_timeout_in_rtc_step(0xFFFFFF)` (fixed in an earlier session, correct).
-   - IRQ mask / preamble / header mode / LDRO: all match standard LoRa RX defaults.
+9. **TCXO config — empirical correction (v1.5 reverts v1.4's #9):** Seeed's generic LR1110MB1DxS BSP (`smtc_shield_lr11x0_common.c::tcxo_cfg`) specifies `LR11XX_SYSTEM_TCXO_CTRL_3_0V, 164` ticks. v1.4 changed `enableTCXO()` to match that (from the prior `1_8V, 983`). On real T1000-E hardware this was a **regression**: close-range RSSI/SNR dropped from −45 dBm / 40 dB SNR (v1.3, 1.8V/983) to −51 dBm / 14 dB SNR (v1.4, 3.0V/164) — the 3.0V/164 config mistunes the carrier and both RSSI and SNR collapse, because the TCXO is the frequency reference for both TX and RX. v1.5 reverts to `1_8V, 983` (1.8V supply, ~30ms settle = 983 ticks × 30.52µs), which matches the 30ms TCXO startup delay Seeed's smtc_modem port declares in `smtc_modem_hal_get_radio_tcxo_startup_delay_ms()`. The T1000-E's TCXO is apparently a 1.8V part (despite the generic shield BSP saying 3.0V — the shield BSP covers multiple LR1110 module variants, not just the T1000-E) and needs the full 30ms to stabilize. Lesson: the generic BSP is a starting point, not authoritative for this specific board — empirical range testing is the ground truth. The 1.8V/983 setting is kept; do NOT "fix" it back to 3.0V/164 without re-testing range on a real T1000-E.
+
+10. **Audit confirmed correct (v1.4, no fix needed):** the following were checked against Seeed's BSP / RadioLib / Meshtastic's T1000-E variant and are already correct in this firmware — no change:
+    - Regulator mode: `LR11XX_SYSTEM_REG_MODE_DCDC` (matches Seeed's `smtc_shield_lr11xx_get_reg_mode`).
+    - Calibration mask: `LF_RC | HF_RC | PLL | ADC | IMG | PLL_TX` = 0x3F (matches RadioLib's `RADIOLIB_LR11X0_CALIBRATE_ALL`).
+    - PA supply selection: LP → `PA_REG_SUPPLY_VREG`, HP → `PA_REG_SUPPLY_VBAT` (matches Seeed + RadioLib).
+    - LP/HP threshold: `level <= 15 → LP`, `16..22 → HP` (matches Seeed's table coverage + RadioLib's `power > 14`).
+    - RX boosted gain: `lr11xx_radio_cfg_rx_boosted(CTX, true)` (matches Meshtastic's `sx126x_rx_boosted_gain` default on the T1000-E variant).
+    - Ramp time: `LR11XX_RADIO_RAMP_48_US` (matches Seeed's `pa_ramp_time`).
+    - Sync word: `SYNC_WORD_PRIVATE` (standard LoRa private, matches RadioLib/Meshtastic default).
+    - CRC: enabled (matches).
+    - Standby config: `STANDBY_CFG_RC` (matches RadioLib; XOSC would be marginally better with TCXO but RC is the standard and not a range bug).
+    - RX continuous mode: `set_rx_with_timeout_in_rtc_step(0xFFFFFF)` (fixed in an earlier session, correct).
+    - IRQ mask / preamble / header mode / LDRO: all match standard LoRa RX defaults.
 
 ## Diagnostic instrumentation currently in the tree (TEMPORARY — remove once RX is fixed)
 

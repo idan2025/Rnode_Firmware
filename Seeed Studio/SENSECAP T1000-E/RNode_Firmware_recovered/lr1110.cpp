@@ -519,21 +519,24 @@ void lr1110::sleep() {
 }
 
 void lr1110::enableTCXO() {
-  // Seeed's official LR1110 sub-GHz BSP for the T1000-E (the module is an
-  // LR1110MB1DxS) configures the TCXO at 3.0V supply with a 164-tick startup
-  // delay (tick = 30.52us @ 32768Hz RTC -> ~5ms):
-  //   t1000_e/LR11XX/smtc_shield_lr11xx/common/src/smtc_shield_lr11x0_common.c:
-  //     .has_tcxo             = true,
-  //     .supply               = LR11XX_SYSTEM_TCXO_CTRL_3_0V,
-  //     .startup_time_in_tick = 164,
-  // The previous firmware used 1.8V / 983 ticks -- wrong supply voltage (the
-  // T1000-E's TCXO is a 3.0V part) and a startup delay read from a different
-  // reference. Mismatched TCXO supply voltage can cause unreliable TCXO
-  // startup / wrong oscillation amplitude, which silently mistunes the
-  // carrier (TX_DONE still fires, frequency readback still looks right, but
-  // the RF is off-channel so peers see it weak or not at all). Matched to
-  // Seeed's BSP byte-for-byte.
-  lr11xx_system_set_tcxo_mode(CTX, LR11XX_SYSTEM_TCXO_CTRL_3_0V, 164);
+  // TCXO supply voltage + startup delay for the T1000-E's LR1110.
+  //
+  // Seeed's generic LR1110MB1DxS BSP (smtc_shield_lr11x0_common.c::tcxo_cfg)
+  // specifies 3.0V / 164 ticks, but on the actual T1000-E hardware that
+  // combination produced a large RX regression vs the prior 1.8V / 983-tick
+  // setting (-51 dBm / 14 dB SNR vs -45 dBm / 40 dB SNR at close range -- the
+  // 3.0V/164 config mistunes the carrier and both RSSI and SNR collapse). The
+  // 1.8V / 983-tick config (1.8V supply, ~30ms settle) is empirically the
+  // correct one for this board: 983 ticks × 30.52us = ~30ms, which matches the
+  // 30ms TCXO startup delay Seeed's smtc_modem port declares in
+  // smtc_modem_hal_get_radio_tcxo_startup_delay_ms(). The T1000-E's TCXO is
+  // apparently a 1.8V part (despite the generic shield BSP saying 3.0V) and
+  // needs the full 30ms to stabilize before any calibration/RF operation.
+  // A too-short settle time lets the PLL calibrate against an unsettled
+  // clock reference, silently mistuning the carrier (TX_DONE still fires,
+  // frequency readback still looks right, but the RF is off-channel so
+  // peers see it weak/noisy). Kept at 1.8V / 983 per empirical testing.
+  lr11xx_system_set_tcxo_mode(CTX, LR11XX_SYSTEM_TCXO_CTRL_1_8V, 983);
 }
 void lr1110::disableTCXO() { }
 
