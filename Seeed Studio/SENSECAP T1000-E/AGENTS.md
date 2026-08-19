@@ -217,6 +217,14 @@ Remaining optional polish: the temporary `stat_rx`/`stat_tx` diagnostic counters
 
 5. **TCXO startup delay 6x too short** (found this session, the most likely RX/TX accuracy culprit): `enableTCXO()` was calling `lr11xx_system_set_tcxo_mode(CTX, LR11XX_SYSTEM_TCXO_CTRL_1_8V, 164)` — 164 ticks × 30.52µs/tick ≈ 5ms. Seeed's reference (`smtc_modem_hal_get_radio_tcxo_startup_delay_ms()` = 30ms, RTC freq 32768Hz) requires **983 ticks ≈ 30ms**. Fixed to `983`. A too-short TCXO settle time lets the PLL calibrate (and TX/RX proceed) against an unstabilized clock reference — mistunes the carrier silently, with NO local status check catching it (TX_DONE still fires, frequency readback still looks correct). This is a real, verified-against-reference fix, but empirically TX worked even before/after it and RX still doesn't work after it either — so it likely wasn't the (sole) root cause of the RX failure, even though it's a legitimate correctness fix worth keeping.
 
+6. **RF switch `tx`/`tx_hp` mistuned — THE range-loss root cause (fixes #4's residual weakness):** the previous `rfswitch_cfg` in `lr1110::begin()` omitted `RFSW3` (DIO8) from both the `tx` and `tx_hp` switch positions, and set `wifi` to `RFSW3_HIGH` (which Meshtastic's T1000-E variant table has as all-low). The T1000-E's external RF switch uses DIO5/6/7/8 as four control lines; with DIO8 left low in TX/TX_HP, the switch never selects the correct TX path, so the LR1110's PA is biased to the requested dBm (e.g. 22 via the HP table from fix #4) but the RF is routed through a mistuned switch position and radiated power collapses far below the requested level. This is why a T1000-E running this firmware at TXP=22 is dramatically weaker than the same device running Meshtastic (which uses the correct table): fix #4 was necessary but not sufficient — the RF switch still threw away the gain. Fixed by porting Meshtastic's `variants/nrf52840/tracker-t1000-e/rfswitch.h` table byte-for-byte into the Semtech `lr11xx_system_rfswitch_cfg_t` bitfield form:
+   - `rx       = RFSW0 | RFSW3`                 (DIO5+DIO8)
+   - `tx       = RFSW0 | RFSW1 | RFSW3`         (DIO5+DIO6+DIO8)
+   - `tx_hp    = RFSW1 | RFSW3`                 (DIO6+DIO8)  <-- HP path, was missing RFSW3
+   - `gnss     = RFSW2`                          (DIO7)
+   - `wifi     = 0`                              (was RFSW3, also wrong)
+   Restores both LP (<=15 dBm) and HP (16-22 dBm) TX paths. After flashing this, re-sync the firmware hash (`hash_sync.py <port> --write`) and re-test range vs. the previous build — expected to bring TXP=22 back to Meshtastic-comparable radiated power.
+
 ## Diagnostic instrumentation currently in the tree (TEMPORARY — remove once RX is fixed)
 
 In `lr1110.cpp`'s `handleDio0Rise()`: repurposed the dead `stat_rx`/`stat_tx` globals (declared in `Config.h`, never incremented anywhere in upstream RNode_Firmware — confirmed via repo-wide grep) as:

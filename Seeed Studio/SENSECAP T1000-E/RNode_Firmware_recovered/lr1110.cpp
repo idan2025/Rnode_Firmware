@@ -135,15 +135,41 @@ int lr1110::begin(long frequency) {
   // configuration for this hardware.
   lr11xx_system_set_reg_mode(CTX, LR11XX_SYSTEM_REG_MODE_DCDC);
 
+  // RF switch topology for the Seeed SenseCAP T1000-E, ported byte-for-byte
+  // from Meshtastic's variant table
+  // (variants/nrf52840/tracker-t1000-e/rfswitch.h) which is itself derived from
+  // Seeed's reference RAL/BSP. The LR1110 drives four RF-switch control lines
+  // on DIO5/6/7/8, which the firmware maps to RFSW0/1/2/3 in
+  // lr11xx_system_set_dio_as_rf_switch. Per-mode switch positions:
+  //
+  //   mode    DIO5  DIO6  DIO7  DIO8      bitfield (RFSW0=RFSW1=RFSW2=RFSW3)
+  //   STBY     L     L     L     L        0
+  //   RX       H     L     L     H        RFSW0 | RFSW3
+  //   TX       H     H     L     H        RFSW0 | RFSW1 | RFSW3
+  //   TX_HP    L     H     L     H        RFSW1 | RFSW3   <-- HP PA path
+  //   TX_HF    L     L     L     L        0
+  //   GNSS     L     L     H     L        RFSW2
+  //   WIFI     L     L     L     L        0
+  //
+  // CRITICAL: the previous config omitted RFSW3 (DIO8) from tx and tx_hp. With
+  // DIO8 low, the external RF switch on the T1000-E does not select the correct
+  // TX path, so the LR1110's PA is biased (e.g. to 22 dBm via the HP table in
+  // setTxPower) but the RF is routed through a mistuned switch position and
+  // radiated power collapses far below the requested level. This is why a T1000-E
+  // running this firmware at TXP=22 is dramatically weaker than the same device
+  // running Meshtastic (which uses the correct table): the PA bias table fix
+  // (item 4 in AGENTS.md) was necessary but not sufficient -- the RF switch
+  // still threw away the gain. Matching the Meshtastic table restores both
+  // the LP (<=15 dBm) and HP (16-22 dBm) TX paths.
   lr11xx_system_rfswitch_cfg_t rfswitch_cfg;
   rfswitch_cfg.enable  = LR11XX_SYSTEM_RFSW0_HIGH | LR11XX_SYSTEM_RFSW1_HIGH | LR11XX_SYSTEM_RFSW2_HIGH | LR11XX_SYSTEM_RFSW3_HIGH;
   rfswitch_cfg.standby = 0;
-  rfswitch_cfg.rx      = LR11XX_SYSTEM_RFSW0_HIGH;
-  rfswitch_cfg.tx       = LR11XX_SYSTEM_RFSW0_HIGH | LR11XX_SYSTEM_RFSW1_HIGH;
-  rfswitch_cfg.tx_hp    = LR11XX_SYSTEM_RFSW1_HIGH;
-  rfswitch_cfg.tx_hf    = 0;
-  rfswitch_cfg.gnss     = LR11XX_SYSTEM_RFSW2_HIGH;
-  rfswitch_cfg.wifi     = LR11XX_SYSTEM_RFSW3_HIGH;
+  rfswitch_cfg.rx      = LR11XX_SYSTEM_RFSW0_HIGH | LR11XX_SYSTEM_RFSW3_HIGH;
+  rfswitch_cfg.tx      = LR11XX_SYSTEM_RFSW0_HIGH | LR11XX_SYSTEM_RFSW1_HIGH | LR11XX_SYSTEM_RFSW3_HIGH;
+  rfswitch_cfg.tx_hp   = LR11XX_SYSTEM_RFSW1_HIGH | LR11XX_SYSTEM_RFSW3_HIGH;
+  rfswitch_cfg.tx_hf   = 0;
+  rfswitch_cfg.gnss    = LR11XX_SYSTEM_RFSW2_HIGH;
+  rfswitch_cfg.wifi    = 0;
   lr11xx_system_set_dio_as_rf_switch(CTX, &rfswitch_cfg);
 
   enableTCXO();
