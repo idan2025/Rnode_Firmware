@@ -25,31 +25,60 @@
 // Seeed's reference ral_lr11xx_bsp.c (LR11XX_PA_LP_LF_CFG_TABLE /
 // LR11XX_PA_HP_LF_CFG_TABLE for the T1000E board). A single fixed
 // duty_cycle/hp_sel pair is only correct for one specific dBm target -
-// using it indiscriminately for any requested power level mis-biases
-// the PA outside that one point, which can visibly degrade actual
-// radiated power/range without showing up as a local TX failure.
+// PA configuration tables ported byte-for-byte from Seeed's official LR1110
+// sub-GHz BSP (LR1110MB1DxS variant -- the module on the SenseCAP T1000-E):
+//   Seeed-Tracker-T1000-E-for-LoRaWAN-dev-board/t1000_e/LR11XX/smtc_shield_lr11xx/
+//   LR1110/LR1110MB1DxS/smtc_shield_lr1110mb1dxs.c  -> pa_cfg_table[]
+// and the common RF-switch/TCXO config:
+//   t1000_e/LR11XX/smtc_shield_lr11xx/common/src/smtc_shield_lr11x0_common.c
+//
+// Each row maps a REQUESTED output power (dBm) to:
+//   - pa_duty_cycle / pa_hp_sel : the PA bias the LR1110 PA_CFG command needs
+//   - tx_power                   : the value to feed lr11xx_radio_set_tx_params
+//                                  (NOT always equal to the requested dBm --
+//                                  Seeed's calibration offsets it, especially
+//                                  in the LP range where the PA is not the
+//                                  linear region; for HP it is saturated at 22)
+//
+// IMPORTANT: Seeed's table only defines HP entries for 16..22 dBm. The LP range
+// covers -17..15 dBm. There is NO HP entry for < 16 dBm and NO LP entry for > 15
+// dBm in Seeed's table -- the firmware selects LP/HP by level exactly the same
+// way (<=15 -> LP, 16..22 -> HP), so the bogus HP entries that used to be in the
+// -9..15 range of the HP table have been removed. They were never correct (they
+// were never reached either, because the LP/HP branch picks LP for <=15), but
+// they were misleading and a transcription hazard.
+//
+// Verified byte-for-byte against Seeed's source via a Python compare script.
+// Do NOT hand-edit -- regenerate from the Seeed BSP if it ever changes.
 #define LR1110_PA_LP_MIN_DBM -17
 #define LR1110_PA_LP_MAX_DBM 15
-#define LR1110_PA_HP_MIN_DBM -9
+#define LR1110_PA_HP_MIN_DBM 16
 #define LR1110_PA_HP_MAX_DBM 22
 
-// Extracted programmatically from the header above to avoid transcription
-// errors - do not hand-edit. Index 0 = LR1110_PA_LP/HP_MIN_DBM.
+// LP PA table: index 0 = -17 dBm, last index = +15 dBm (33 entries).
+// pa_reg_supply = LR11XX_RADIO_PA_REG_SUPPLY_VREG (constant for the whole LP range).
+// Generated from Seeed's pa_cfg_table[] -- do not hand-edit.
 static const uint8_t lr1110_pa_lp_duty_cycle[LR1110_PA_LP_MAX_DBM - LR1110_PA_LP_MIN_DBM + 1] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x02, 0x03, 0x04, 0x07
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x02, 0x03, 0x04, 0x07
 };
 static const uint8_t lr1110_pa_lp_hp_sel[LR1110_PA_LP_MAX_DBM - LR1110_PA_LP_MIN_DBM + 1] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
+// The tx_params power value Seeed's BSP sends for each requested LP dBm (NOT
+// equal to the requested dBm -- Seeed offsets it). Index 0 = -17 dBm.
+static const int8_t lr1110_pa_lp_tx_power[LR1110_PA_LP_MAX_DBM - LR1110_PA_LP_MIN_DBM + 1] = {
+  -15, -14, -13, -12, -11,  -9,  -8,  -7,  -6,  -5,  -4,  -3,  -2,  -1,   0,   1,   2,   3,   3,   4,   7,   8,   9,  10,  12,  13,  14,  13,  13,  14,  14,  14,  14
+};
+
+// HP PA table: index 0 = +16 dBm, last index = +22 dBm (7 entries).
+// pa_reg_supply = LR11XX_RADIO_PA_REG_SUPPLY_VBAT (constant for the whole HP range).
+// tx_power is 22 (saturated) for every HP entry -- the PA output is controlled
+// by pa_duty_cycle / pa_hp_sel, not by the tx_params power value.
 static const uint8_t lr1110_pa_hp_duty_cycle[LR1110_PA_HP_MAX_DBM - LR1110_PA_HP_MIN_DBM + 1] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x02, 0x04, 0x00, 0x00, 0x01, 0x02, 0x00, 0x04, 0x02,
-  0x01, 0x04, 0x00, 0x01, 0x02, 0x03, 0x00, 0x01, 0x04, 0x01, 0x02, 0x01, 0x03, 0x03, 0x04, 0x04
+  0x01, 0x02, 0x01, 0x03, 0x04, 0x05, 0x06
 };
 static const uint8_t lr1110_pa_hp_hp_sel[LR1110_PA_HP_MAX_DBM - LR1110_PA_HP_MIN_DBM + 1] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x02,
-  0x03, 0x02, 0x01, 0x01, 0x01, 0x01, 0x03, 0x03, 0x02, 0x04, 0x04, 0x06, 0x05, 0x07, 0x06, 0x07
+  0x04, 0x04, 0x06, 0x05, 0x07, 0x07, 0x07
 };
 
 #if defined(NRF52840_XXAA)
@@ -490,14 +519,21 @@ void lr1110::sleep() {
 }
 
 void lr1110::enableTCXO() {
-  // tick = 30.52 us (RTC freq 32768 Hz). Seeed's reference
-  // (smtc_modem_hal_get_radio_tcxo_startup_delay_ms() = 30ms) waits
-  // 30ms = 983 ticks for the TCXO to actually stabilize before any
-  // calibration/RF operation runs. A too-short wait here lets the PLL
-  // calibrate (and TX/RX proceed) against an unsettled clock reference,
-  // which silently mistunes the carrier without failing any local status
-  // check (TX_DONE still fires, frequency readback still looks right).
-  lr11xx_system_set_tcxo_mode(CTX, LR11XX_SYSTEM_TCXO_CTRL_1_8V, 983);
+  // Seeed's official LR1110 sub-GHz BSP for the T1000-E (the module is an
+  // LR1110MB1DxS) configures the TCXO at 3.0V supply with a 164-tick startup
+  // delay (tick = 30.52us @ 32768Hz RTC -> ~5ms):
+  //   t1000_e/LR11XX/smtc_shield_lr11xx/common/src/smtc_shield_lr11x0_common.c:
+  //     .has_tcxo             = true,
+  //     .supply               = LR11XX_SYSTEM_TCXO_CTRL_3_0V,
+  //     .startup_time_in_tick = 164,
+  // The previous firmware used 1.8V / 983 ticks -- wrong supply voltage (the
+  // T1000-E's TCXO is a 3.0V part) and a startup delay read from a different
+  // reference. Mismatched TCXO supply voltage can cause unreliable TCXO
+  // startup / wrong oscillation amplitude, which silently mistunes the
+  // carrier (TX_DONE still fires, frequency readback still looks right, but
+  // the RF is off-channel so peers see it weak or not at all). Matched to
+  // Seeed's BSP byte-for-byte.
+  lr11xx_system_set_tcxo_mode(CTX, LR11XX_SYSTEM_TCXO_CTRL_3_0V, 164);
 }
 void lr1110::disableTCXO() { }
 
@@ -505,20 +541,31 @@ void lr1110::setTxPower(int level, int outputPin) {
   if (level > LR1110_PA_HP_MAX_DBM) { level = LR1110_PA_HP_MAX_DBM; }
   else if (level < LR1110_PA_LP_MIN_DBM) { level = LR1110_PA_LP_MIN_DBM; }
 
+  // The value fed to lr11xx_radio_set_tx_params is NOT the requested dBm --
+  // Seeed's BSP calibration tables (ral_lr11xx_bsp.c::ral_lr11xx_bsp_get_tx_cfg)
+  // pass a per-dBm "chip_output_pwr_in_dbm_configured" that differs from the
+  // requested system output power. For the HP range the PA is saturated and
+  // the table always sends 22; for the LP range it is an offset value from the
+  // lr1110_pa_lp_tx_power[] table. The previous firmware passed `level` straight
+  // through, which under-driven the PA in the LP range and is wrong per the
+  // reference even where it happened to coincide (HP @ 22).
+  int8_t tx_power;
   lr11xx_radio_pa_cfg_t pa_cfg;
   if (level <= LR1110_PA_LP_MAX_DBM) {
     pa_cfg.pa_sel = LR11XX_RADIO_PA_SEL_LP;
     pa_cfg.pa_reg_supply = LR11XX_RADIO_PA_REG_SUPPLY_VREG;
     pa_cfg.pa_duty_cycle = lr1110_pa_lp_duty_cycle[level - LR1110_PA_LP_MIN_DBM];
     pa_cfg.pa_hp_sel = lr1110_pa_lp_hp_sel[level - LR1110_PA_LP_MIN_DBM];
+    tx_power = lr1110_pa_lp_tx_power[level - LR1110_PA_LP_MIN_DBM];
   } else {
     pa_cfg.pa_sel = LR11XX_RADIO_PA_SEL_HP;
     pa_cfg.pa_reg_supply = LR11XX_RADIO_PA_REG_SUPPLY_VBAT;
     pa_cfg.pa_duty_cycle = lr1110_pa_hp_duty_cycle[level - LR1110_PA_HP_MIN_DBM];
     pa_cfg.pa_hp_sel = lr1110_pa_hp_hp_sel[level - LR1110_PA_HP_MIN_DBM];
+    tx_power = 22; // HP PA saturated; output controlled by duty_cycle/hp_sel
   }
   lr11xx_radio_set_pa_cfg(CTX, &pa_cfg);
-  lr11xx_radio_set_tx_params(CTX, (int8_t)level, LR11XX_RADIO_RAMP_48_US);
+  lr11xx_radio_set_tx_params(CTX, tx_power, LR11XX_RADIO_RAMP_48_US);
 
   _txp = level;
 }
