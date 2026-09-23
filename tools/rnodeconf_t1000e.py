@@ -23,7 +23,8 @@ tags are named like ``v1.7-t1000e``), so ``-u`` always installs the latest.
 rnodeconf flashes nRF52 boards with ``adafruit-nrfutil ... -t 1200``, which
 does the 1200-baud bootloader touch itself but does not wait long enough for
 the T1000-E bootloader to enumerate. The wrapper does the touch itself, waits
-for the bootloader port (USB 2886:0057), and then runs nrfutil on it.
+for the bootloader port (USB 2886:0057), runs nrfutil on it, and then waits
+for the application port (USB 2886:8057) before rnodeconf reconnects.
 
 This wrapper is only meant for the T1000-E. For other boards use the stock
 rnodeconf, which downloads from the official RNode firmware releases.
@@ -40,8 +41,10 @@ MODEL_B5       = 0xB5
 BOARD_T1000E   = 0x52
 
 SEEED_VID       = 0x2886
+APP_PID         = 0x8057
 BOOTLOADER_PID  = 0x0057
 BOOTLOADER_WAIT = 30
+APP_WAIT        = 30
 
 
 def patch(rnodeconf):
@@ -55,27 +58,38 @@ def patch(rnodeconf):
         MODEL_B5, [863000000, 928000000, 22, "863 - 928 MHz", "rnode_firmware_t1000e.zip", "LR1110"])
 
 
-def find_bootloader_port():
+def find_port(pid):
     from serial.tools import list_ports
     for p in list_ports.comports():
-        if p.vid == SEEED_VID and p.pid == BOOTLOADER_PID:
+        if p.vid == SEEED_VID and p.pid == pid:
             return p.device
     return None
 
 
+def wait_for_port(pid, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        port = find_port(pid)
+        if port:
+            time.sleep(1)
+            return port
+        time.sleep(0.5)
+    return None
+
+
 def touch_into_bootloader(port):
-    import serial
+    import os, serial
+    # rnodeconf writes the new firmware hash right before flashing, and the
+    # firmware hard-resets after saving it, so the port may still be
+    # re-enumerating (possibly under a new name) at this point.
+    if not os.path.exists(port):
+        port = wait_for_port(APP_PID, APP_WAIT)
+        if port is None:
+            return None
     s = serial.Serial(port, 1200)
     time.sleep(0.3)
     s.close()
-    deadline = time.time() + BOOTLOADER_WAIT
-    while time.time() < deadline:
-        bootloader_port = find_bootloader_port()
-        if bootloader_port:
-            time.sleep(1)
-            return bootloader_port
-        time.sleep(0.5)
-    return None
+    return wait_for_port(BOOTLOADER_PID, BOOTLOADER_WAIT)
 
 
 def patch_dfu_call():
@@ -93,6 +107,12 @@ def patch_dfu_call():
                 return 1
             cmd[p+1] = bootloader_port
             cmd.append("--singlebank")
+            status = stock_call(cmd, *args, **kwargs)
+            # rnodeconf reopens the serial port as soon as nrfutil exits, so
+            # wait for the application to enumerate again first.
+            if status == 0 and wait_for_port(APP_PID, APP_WAIT) is None:
+                print("Device did not come back within "+str(APP_WAIT)+" seconds after flashing.")
+            return status
         return stock_call(cmd, *args, **kwargs)
 
     subprocess.call = call
