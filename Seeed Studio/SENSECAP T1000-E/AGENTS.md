@@ -1,31 +1,106 @@
 # RNode Firmware for Seeed SenseCAP T1000-E — Project State
 
-Last updated: 2026-06-28. This file reflects the CURRENT state.
+Last updated: 2026-09-23. This file reflects the CURRENT state.
 Everything below the "Resolved/historical" section at the bottom was
 superseded — board-model detection, EEPROM validity, BLE reconnect, and
 the basic build pipeline are all working now.
 
-## ISSUE #7 (2026-09-23) — fresh unit "flashes OK but never responds as an RNode" — FIXED, pending HW verify
-- **Symptom:** new unit flashed via nrfutil or web flasher enumerates in app mode
-  (2886:8057), but `rnodeconf -i` says "RNode did not respond", web flasher says
-  "Selected device is not an RNode!", no LED activity.
+## v1.7 (2026-09-23) — rnodeconf support + firmware-hash region fix ✅ HW-verified, released
+- **Release:** `v1.7-t1000e` (Latest). Assets: `rnode_firmware_t1000e.zip` (sha256
+  `6f726c5a…`) + `release.json` (`{"rnode_firmware_t1000e.zip": {"version":
+  "v1.7-t1000e", "hash": <zip sha256>}}`). Merged as PR #9. The zip on raw `main`
+  (web flasher) is identical.
+- **Firmware-hash region bug (`Device.h`):** the firmware hashed its app from
+  `APPLICATION_START 0x26000` (S140 v6.1.1 layout). The T1000-E bootloader ships
+  S140 **v7.3.0**, so the app starts at **0x27000** (`nrf52840_s140_v7.ld`, reset
+  vector 0x4a3ed). So the live hash never equalled `sha256(.bin)`, which is what
+  stock rnodeconf writes as the target after `-r`/`-u`: the radio never armed
+  after an rnodeconf flash. This is the real reason the old venv-patched
+  rnodeconf had to ask the device for its own hash (`request_firmware_hash`).
+  Fixed: `APPLICATION_START 0x27000` for `BOARD_T1000E`. HW-verified: live hash
+  `cf5ee84a…` == `sha256(rnode_firmware_t1000e.bin)`. The web flasher's "Set
+  Firmware Hash" reads the live hash, so it is unaffected.
+- **rnodeconf support = `tools/rnodeconf_t1000e.py` wrapper** (no venv patching
+  needed any more). It imports the pip-installed `RNS.Utilities.rnodeconf`, adds
+  `PRODUCT_T1000E 0x1E` / `MODEL_B5 0xB5` / `BOARD_T1000E 0x52` plus the
+  products/models entries, defaults `--fw-url` to this repo's releases, and runs
+  the stock `main()`. Stock rnodeconf 2.5.0 crashes on this unit with
+  `KeyError: 181` without it. Usage: `-i`, `-r --product 1e --model b5 --hwrev 1`,
+  `-u`.
+  - `--fw-url` layout: rnodeconf fetches `<url>latest/download/release.json`, then
+    `<url>download/<version>/<zip>`. So **`version` in release.json must equal
+    the tag name**. `--fw-version` cannot pick our tags (rnodeconf requires a
+    float), so `-u` always installs the latest release. **Every future release
+    MUST attach a `release.json`**, or the wrapper's `-u` breaks.
+  - The wrapper hooks `subprocess.call` for rnodeconf's
+    `adafruit-nrfutil ... -t 1200`. It does the 1200-baud touch itself, waits
+    for the bootloader (2886:0057, took ~3.5 s here, which is longer than
+    nrfutil's own `-t` wait, so that failed with "Target is not in DFU mode"),
+    runs nrfutil with `--singlebank`, then waits for the app port (2886:8057)
+    before rnodeconf reconnects. It also waits for the app port before the
+    touch, because the firmware hard-resets after saving a new hash
+    (`device_save_firmware_hash`).
+- **Zip naming:** `build_t1000e.sh` now repackages the DFU zip as
+  `build/rnode_firmware_t1000e.zip` containing `rnode_firmware_t1000e.{bin,dat}`
+  (manifest updated), like the official RNode packages. rnodeconf hashes
+  `<zip name>.bin` from inside the package; with the arduino-cli names
+  (`RNode_Firmware.ino.*`) it silently skipped writing the hash. The web
+  flasher's `nrf52_dfu_flasher.js` reads names from `manifest.json`, so it is
+  unaffected.
+- **HW test (`-u` via the wrapper against a local mirror of the release
+  layout):** download, integrity check, hash write, touch, DFU all OK; the
+  stored hash == live hash afterwards. The device did not re-attach to the test
+  VM after DFU and needed a replug (see test-bench notes below).
+- **Upstream:** do NOT open PRs/issues on markqvist/Reticulum or
+  markqvist/RNode_Firmware. Their Contributing.md bans LLM-written
+  contributions and requires coordinating with the maintainer first. T1000-E
+  rnodeconf support stays in the wrapper unless the owner upstreams it himself.
+- **Supersedes** older notes further down this file: the venv-patched rnodeconf,
+  the "Method A" `rnodeconf -u -U --nocheck --fw-version 1.86`, and the manual
+  rnodeconf cache sync (`~/.config/rnodeconf/...` + release_info*.json) are no
+  longer needed. Use the wrapper + release.json.
+
+## v1.6 / ISSUE #7 (2026-09-23) — fresh unit "flashes OK but never responds as an RNode" ✅ HW-verified, released
+- **Symptom:** a new unit flashed via nrfutil or the web flasher enumerates in
+  app mode (2886:8057), but `rnodeconf -i` says "RNode did not respond", the web
+  flasher says "Selected device is not an RNode!", and there is no LED activity.
 - **Root cause:** on an unprovisioned unit (and any unit with a hash-gate
   mismatch) `hw_ready` is false, so `loop()` calls `stopRadio()` on EVERY
   iteration -> `lr1110::end()` -> `sleep()` (SetSleep). The LR11xx holds BUSY high
   the whole time it is asleep, and the HAL waited on BUSY (1 s timeout) both
-  after SetSleep and before the next command -> each `loop()` iteration took
-  ~1-2 s. KISS detect replies arrive long after stock rnodeconf/web flasher give
-  up, and the LED heartbeat/not-ready blink (both tick/`millis()%1000` driven)
-  essentially never lights. Never seen on the dev unit because it was provisioned
-  + hash-matched (and used the patched, longer-timeout rnodeconf).
+  after SetSleep and before the next command, so each `loop()` iteration took
+  ~1-2 s. KISS detect replies arrived long after stock rnodeconf and the web
+  flasher gave up, and the LED heartbeat/not-ready blink (both driven by
+  ticks / `millis()%1000`) almost never lit. Never seen on the dev unit because
+  it was provisioned + hash-matched (and used the patched, longer-timeout
+  rnodeconf).
 - **Fix:** `lr1110::end()` only sends SetSleep if the chip is initialised
-  (`_preinit_done`), so repeated `stopRadio()` is a no-op; HAL
-  (`lr11xx_hal_arduino.cpp`) tracks sleep like Semtech's reference HAL — no BUSY
-  wait after SetSleep, NSS wake pulse before the next command.
-- **Verify on HW:** flash to a blank/unprovisioned unit, `rnodeconf -i` must
-  answer immediately (unprovisioned), then provision + hash-sync and re-run
-  `radio_verify.py` (radio arm/TX unchanged; radio on/off cycling via
-  `CMD_RADIO_STATE` must no longer stall ~1 s on "off").
+  (`_preinit_done`), so repeated `stopRadio()` is a no-op. The HAL
+  (`lr11xx_hal_arduino.cpp`) tracks sleep like Semtech's reference HAL: no BUSY
+  wait after SetSleep, and an NSS wake pulse before the next command.
+- **HW-verified:** with the hash gate deliberately mismatched (same `loop()` path
+  as a fresh unit), detect replies in 1 ms, 5/5. After hash sync,
+  `radio_verify.py` PASS; `CMD_RADIO_STATE` off/on replies in ~1 ms (used to
+  stall ~1 s on "off"). NOT tested on a fully wiped EEPROM (same code path).
+  Released as `v1.6-t1000e` (PR #8), and issue #7 got follow-ups for v1.6 and v1.7.
+- **Ruled out while hunting this:** a leftover LittleFS from Meshtastic/stock
+  firmware. The core's lfs v1.6 on a host harness, run against a full foreign FS,
+  did not hang (it only returns NOSPC for EEPROM writes). The Seeed core and
+  Meshtastic share the InternalFS geometry: 0xED000, 7×4 KB, 128 B blocks.
+
+## Test bench (2026-09-23): dev unit in a KVM VM
+- Dev unit serial `6EAF1F35E2309DF5`, passed into a KVM VM by **USB port**
+  (passthrough by VID:PID lost the bootloader PID 0057 mid-DFU). App
+  2886:8057, bootloader 2886:0057, both at `/dev/ttyACM0`.
+- The unit repeatedly dropped out of the VM after a reset/DFU that followed a
+  longer serial session. A plain replug brought it back running the new image
+  each time. Flashing from the manual bootloader (hold button while plugging in)
+  re-enumerated normally. So this is most likely the VM passthrough, not a
+  firmware hang (post-DFU boot is identical either way), but it was never
+  confirmed from the host side.
+- Handy probe: send `C0 08 73 C0` (CMD_DETECT) and time the `C0 08 46` reply.
+  Healthy = ~1 ms. The noise floor read -90/-91 dBm on this bench (older notes:
+  -112..-127), probably local interference.
 
 ## BATTERY-LIFE FIX (2026-06-28) — branch `fix/t1000e-battery` ✅ built, pending HW verify
 

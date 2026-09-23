@@ -20,7 +20,7 @@ arduino_build/bin/arduino-cli --config-file /tmp/acli.yaml compile \
   --fqbn Seeeduino:nrf52:tracker_t1000_e_lorawan -e \
   --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x52" /tmp/RNode_Firmware
 ```
-`/tmp/acli.yaml` must set `directories.data`/`downloads`/`user` to `arduino_build/{data,downloads,user}`. `-DBOARD_MODEL=0x52` is REQUIRED (no default). The `HAS_TCXO/HAS_INPUT/HAS_SLEEP redefined` warnings are pre-existing (Boards.h defaults then per-board), harmless. Output: `build/Seeeduino.nrf52.tracker_t1000_e_lorawan/RNode_Firmware.ino.zip`.
+`/tmp/acli.yaml` must set `directories.data`/`downloads`/`user` to `arduino_build/{data,downloads,user}`. `-DBOARD_MODEL=0x52` is REQUIRED (no default). The `HAS_TCXO/HAS_INPUT/HAS_SLEEP redefined` warnings are pre-existing (Boards.h defaults then per-board), harmless. Output: `build/Seeeduino.nrf52.tracker_t1000_e_lorawan/RNode_Firmware.ino.zip`. `build_t1000e.sh` then repackages it as `build/rnode_firmware_t1000e.zip` (inner files `rnode_firmware_t1000e.{bin,dat}`); **ship that one**, because rnodeconf needs the renamed .bin to set the firmware hash.
 
 **Flash** (venv `~/Downloads/venvs/rns/bin` has adafruit-nrfutil + rnodeconf):
 ```
