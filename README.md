@@ -17,8 +17,20 @@ LR1110 driver and a T1000-E board profile so the device just works.
 2. Pick **Seeed SenseCAP T1000-E** and click **Flash** (the firmware downloads automatically).
 3. Then **Provision EEPROM** → **Set Firmware Hash**. That's it.
 
-Prefer the command line? Use `rnodeconf -u` or the bundled `./provision_t1000e.sh`
-(flash + provision + BLE + firmware-hash sync in one go) — see [the model folder](Seeed%20Studio/SENSECAP%20T1000-E/).
+Prefer the command line? Stock `rnodeconf` doesn't know the T1000-E yet (it crashes with
+`KeyError: 181`), so use the bundled wrapper, which adds T1000-E support to your installed
+rnodeconf and pulls firmware from this repo's releases:
+
+```
+pip install rns adafruit-nrfutil
+python tools/rnodeconf_t1000e.py -i /dev/ttyACM0                                 # device info
+python tools/rnodeconf_t1000e.py -r --product 1e --model b5 --hwrev 1 /dev/ttyACM0  # provision
+python tools/rnodeconf_t1000e.py -u /dev/ttyACM0                                 # update firmware
+```
+
+For a brand-new unit, flash with the web flasher (or `adafruit-nrfutil`) first, then provision.
+There's also `./provision_t1000e.sh` (flash + provision + BLE + firmware-hash sync in one go) —
+see [the model folder](Seeed%20Studio/SENSECAP%20T1000-E/).
 
 ## Does it actually work? Yes — tested hard
 
@@ -106,6 +118,9 @@ Seeed Studio/
     AGENTS.md / Result.md        engineering log + results
 firmware/
   rnode_firmware_t1000e.zip      canonical image the web flasher pulls
+tools/
+  rnodeconf_t1000e.py            stock rnodeconf + T1000-E support (info / provision / update)
+  rnode_serial.py                show / set radio params / wipe EEPROM
 ```
 
 > **Seeed XIAO nRF52840 + Wio-SX1262 port:** a port for that board exists but is **not

@@ -34,7 +34,16 @@
 // https://learn.adafruit.com/introducing-the-adafruit-nrf52840-feather/hathach-memory-map
 // each section follows along from one another, in this order
 // this is always at the start of the memory map
-#define APPLICATION_START 0x26000
+#if BOARD_MODEL == BOARD_T1000E
+  // The T1000-E bootloader ships SoftDevice S140 v7.3.0, which is 4 KB
+  // larger than the S140 v6.1.1 assumed above, so the application starts
+  // at 0x27000 (nrf52840_s140_v7.ld). Hashing from 0x26000 made the live
+  // firmware hash never match sha256(firmware .bin), which is what
+  // rnodeconf writes as the target hash after flashing/provisioning.
+  #define APPLICATION_START 0x27000
+#else
+  #define APPLICATION_START 0x26000
+#endif
 
 #define USER_DATA_START 0xED000
 

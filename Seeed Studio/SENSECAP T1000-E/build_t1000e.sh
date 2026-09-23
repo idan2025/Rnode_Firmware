@@ -102,7 +102,27 @@ fi
   --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x52${LP_FLAG}" \
   "$DST"
 
-ZIP="$DST/build/Seeeduino.nrf52.tracker_t1000_e_lorawan/RNode_Firmware.ino.zip"
+BUILD_ZIP="$DST/build/Seeeduino.nrf52.tracker_t1000_e_lorawan/RNode_Firmware.ino.zip"
+
+# Repackage with the upstream RNode naming (rnode_firmware_t1000e.{bin,dat}).
+# rnodeconf computes the firmware hash from <zip name>.bin inside the package,
+# so the arduino-cli names (RNode_Firmware.ino.*) make it skip setting the hash.
+ZIP="$DST/build/rnode_firmware_t1000e.zip"
+python3 - "$BUILD_ZIP" "$ZIP" <<'PY'
+import json, sys, zipfile
+src, dst = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(src) as zin:
+    manifest = json.loads(zin.read("manifest.json"))
+    app = manifest["manifest"]["application"]
+    files = {"rnode_firmware_t1000e.bin": zin.read(app["bin_file"]),
+             "rnode_firmware_t1000e.dat": zin.read(app["dat_file"])}
+app["bin_file"], app["dat_file"] = "rnode_firmware_t1000e.bin", "rnode_firmware_t1000e.dat"
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+    zout.writestr("manifest.json", json.dumps(manifest, indent=4))
+    for name, data in files.items():
+        zout.writestr(name, data)
+PY
+
 echo ">> DONE. DFU package:"
 echo "   $ZIP"
 ls -la "$ZIP"
