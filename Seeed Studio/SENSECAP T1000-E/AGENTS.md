@@ -5,6 +5,28 @@ Everything below the "Resolved/historical" section at the bottom was
 superseded — board-model detection, EEPROM validity, BLE reconnect, and
 the basic build pipeline are all working now.
 
+## ISSUE #7 (2026-09-23) — fresh unit "flashes OK but never responds as an RNode" — FIXED, pending HW verify
+- **Symptom:** new unit flashed via nrfutil or web flasher enumerates in app mode
+  (2886:8057), but `rnodeconf -i` says "RNode did not respond", web flasher says
+  "Selected device is not an RNode!", no LED activity.
+- **Root cause:** on an unprovisioned unit (and any unit with a hash-gate
+  mismatch) `hw_ready` is false, so `loop()` calls `stopRadio()` on EVERY
+  iteration -> `lr1110::end()` -> `sleep()` (SetSleep). The LR11xx holds BUSY high
+  the whole time it is asleep, and the HAL waited on BUSY (1 s timeout) both
+  after SetSleep and before the next command -> each `loop()` iteration took
+  ~1-2 s. KISS detect replies arrive long after stock rnodeconf/web flasher give
+  up, and the LED heartbeat/not-ready blink (both tick/`millis()%1000` driven)
+  essentially never lights. Never seen on the dev unit because it was provisioned
+  + hash-matched (and used the patched, longer-timeout rnodeconf).
+- **Fix:** `lr1110::end()` only sends SetSleep if the chip is initialised
+  (`_preinit_done`), so repeated `stopRadio()` is a no-op; HAL
+  (`lr11xx_hal_arduino.cpp`) tracks sleep like Semtech's reference HAL — no BUSY
+  wait after SetSleep, NSS wake pulse before the next command.
+- **Verify on HW:** flash to a blank/unprovisioned unit, `rnodeconf -i` must
+  answer immediately (unprovisioned), then provision + hash-sync and re-run
+  `radio_verify.py` (radio arm/TX unchanged; radio on/off cycling via
+  `CMD_RADIO_STATE` must no longer stall ~1 s on "off").
+
 ## BATTERY-LIFE FIX (2026-06-28) — branch `fix/t1000e-battery` ✅ built, pending HW verify
 
 Reported: two T1000-E units runtime dropped from ~2 days (Meshtastic) to <24h on

@@ -220,7 +220,16 @@ int lr1110::begin(long frequency) {
   return 1;
 }
 
-void lr1110::end() { sleep(); SPI.end(); _preinit_done = false; }
+// loop() calls stopRadio() -> end() on EVERY iteration while the device is
+// not hw_ready (fresh/unprovisioned unit, or firmware-hash mismatch). Only put
+// the chip to sleep the first time; once it is asleep and SPI is released
+// there is nothing left to do, and re-sending SetSleep to a sleeping LR1110
+// used to stall the loop on its BUSY line for ~2 s per iteration (issue #7).
+void lr1110::end() {
+  if (_preinit_done) { sleep(); }
+  SPI.end();
+  _preinit_done = false;
+}
 
 int lr1110::beginPacket(int implicitHeader) {
   standby();

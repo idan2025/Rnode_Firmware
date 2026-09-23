@@ -37,9 +37,27 @@ static void lr11xx_hal_wait_on_busy() {
   }
 }
 
+// The LR11xx holds BUSY high for as long as it is asleep, so a plain BUSY
+// wait before/after SetSleep burns the full 1 s timeout every time. Track
+// sleep explicitly (as Semtech's reference HAL does): skip the post-command
+// BUSY wait for SetSleep, and wake the chip with an NSS pulse before the
+// next command instead of timing out on BUSY.
+#define LR11XX_HAL_SET_SLEEP_OC 0x011B
+static bool _sleeping = false;
+
+static void lr11xx_hal_check_device_ready() {
+  if (_sleeping) {
+    digitalWrite(_ss_pin, LOW);
+    delayMicroseconds(20);
+    digitalWrite(_ss_pin, HIGH);
+    _sleeping = false;
+  }
+  lr11xx_hal_wait_on_busy();
+}
+
 extern "C" lr11xx_hal_status_t lr11xx_hal_write(const void* context, const uint8_t* command, const uint16_t command_length,
                                                  const uint8_t* data, const uint16_t data_length) {
-  lr11xx_hal_wait_on_busy();
+  lr11xx_hal_check_device_ready();
 
   digitalWrite(_ss_pin, LOW);
   _spi->beginTransaction(_spi_settings);
@@ -48,10 +66,16 @@ extern "C" lr11xx_hal_status_t lr11xx_hal_write(const void* context, const uint8
   _spi->endTransaction();
   digitalWrite(_ss_pin, HIGH);
 
-  // The chip raises BUSY while it processes most commands (including
-  // GoToSleep). Waiting here keeps every subsequent HAL call honest
-  // about chip readiness without each call needing to know which
-  // commands are slow.
+  if (command_length >= 2 && ((command[0] << 8) | command[1]) == LR11XX_HAL_SET_SLEEP_OC) {
+    // BUSY stays high until the chip is woken up again; don't wait on it.
+    _sleeping = true;
+    delayMicroseconds(500);
+    return LR11XX_HAL_STATUS_OK;
+  }
+
+  // The chip raises BUSY while it processes most commands. Waiting here
+  // keeps every subsequent HAL call honest about chip readiness without
+  // each call needing to know which commands are slow.
   lr11xx_hal_wait_on_busy();
 
   return LR11XX_HAL_STATUS_OK;
@@ -59,7 +83,7 @@ extern "C" lr11xx_hal_status_t lr11xx_hal_write(const void* context, const uint8
 
 extern "C" lr11xx_hal_status_t lr11xx_hal_read(const void* context, const uint8_t* command, const uint16_t command_length,
                                                 uint8_t* data, const uint16_t data_length) {
-  lr11xx_hal_wait_on_busy();
+  lr11xx_hal_check_device_ready();
 
   digitalWrite(_ss_pin, LOW);
   _spi->beginTransaction(_spi_settings);
@@ -80,7 +104,7 @@ extern "C" lr11xx_hal_status_t lr11xx_hal_read(const void* context, const uint8_
 }
 
 extern "C" lr11xx_hal_status_t lr11xx_hal_direct_read(const void* context, uint8_t* data, const uint16_t data_length) {
-  lr11xx_hal_wait_on_busy();
+  lr11xx_hal_check_device_ready();
 
   digitalWrite(_ss_pin, LOW);
   _spi->beginTransaction(_spi_settings);
@@ -98,6 +122,7 @@ extern "C" lr11xx_hal_status_t lr11xx_hal_reset(const void* context) {
     digitalWrite(_reset_pin, HIGH);
   }
   delay(150); // LR11xx boot time after reset
+  _sleeping = false;
   lr11xx_hal_wait_on_busy();
   return LR11XX_HAL_STATUS_OK;
 }
@@ -106,6 +131,7 @@ extern "C" lr11xx_hal_status_t lr11xx_hal_wakeup(const void* context) {
   digitalWrite(_ss_pin, LOW);
   delayMicroseconds(20);
   digitalWrite(_ss_pin, HIGH);
+  _sleeping = false;
   lr11xx_hal_wait_on_busy();
   return LR11XX_HAL_STATUS_OK;
 }
